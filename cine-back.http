@@ -1,0 +1,11 @@
+@cine_back_HostAddress = http://localhost:5203
+
+GET {{cine_back_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
+
+GET {{cine_back_HostAddress}}/test/
+Accept: text/plain
+
+###
