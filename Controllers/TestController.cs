@@ -10,7 +10,7 @@ namespace cine_back.Controllers
         [HttpGet]
         public ActionResult<string> Get()
         {
-            return Ok("Servicio funcionando");
+            return Ok("Servicio funcionando en AZURE actualizado a las 9:40 am");
         }
     }
 }
