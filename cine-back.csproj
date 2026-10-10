@@ -24,7 +24,13 @@
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.24.2-preview.1" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.3.0" />
   </ItemGroup>
-
+	<!-- Bloque para ignorar completamente la carpeta de pruebas anidada -->
+	<ItemGroup>
+		<Compile Remove="cine-back.Tests\**" />
+		<Content Remove="cine-back.Tests\**" />
+		<EmbeddedResource Remove="cine-back.Tests\**" />
+		<None Remove="cine-back.Tests\**" />
+	</ItemGroup>
   <ItemGroup>
     <Folder Include="Data\" />
     <Folder Include="Models\" />

@@ -49,17 +49,23 @@ namespace cine_back.Services
             // 1. Resolver IP si viene de Swagger (localhost)
             clientIp = ResolveClientIp(clientIp);
 
-            // TODO: [Deuda Técnica] Eliminar este usuario administrador hardcodeado 
-            // una vez que la HU de Registro de Usuarios esté terminada y la BD tenga datos.
-            if (request.NombreUsuario == "admin" && request.Password == "admin123")
+            // ====================================================================
+            // PARCHE INTELIGENTE: Usuario administrador de rescate (Autodestructible)
+            // ====================================================================
+            // Verificamos si ya existe algún usuario con rol "Admin" activo en la BD
+            bool existeAdminReal = await _db.Vendedors
+                .AnyAsync(v => v.IdRolNavigation.NombreRol == "Admin" && v.EstadoActivo);
+
+            // Si NO hay admins reales, permitimos el acceso con la cuenta temporal
+            if (!existeAdminReal && request.NombreUsuario == "admin" && request.Password == "admin123")
             {
                 return new LoginResponseDto
                 {
                     Success = true,
-                    Message = "Inicio de sesión exitoso (Admin temporal).",
+                    Message = "Inicio de sesión exitoso (Admin de rescate habilitado).",
                     IdVendedor = 0,
                     Nombre = "Administrador Supremo",
-                    Rol = "Admin" // Como el rol no es "Vendedor", no le afectará el bloqueo de IP
+                    Rol = "Admin"
                 };
             }
             // ====================================================================
@@ -90,7 +96,7 @@ namespace cine_back.Services
                 };
             }
 
-            // 4. SEGUNDO: Verificar restricción de IP de la HU-04 SOLAMENTE para el rol Vendedor[cite: 12]
+            // 4. SEGUNDO: Verificar restricción de IP de la HU-04 SOLAMENTE para el rol Vendedor
             bool isLocalIp = await _db.RedesAutorizadas.AnyAsync(r => r.DireccionIp == clientIp);
             string nombreRol = vendedor.IdRolNavigation?.NombreRol ?? string.Empty;
 
