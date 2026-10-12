@@ -1,7 +1,7 @@
 ﻿using cine_back.Dtos;
 using cine_back.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
-
+using Microsoft.EntityFrameworkCore;
 namespace cine_back.Controllers;
 
 [ApiController]
@@ -60,4 +60,7 @@ public class AuthController : ControllerBase
 
         return HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
     }
+
+  
+
 }

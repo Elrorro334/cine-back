@@ -13,11 +13,11 @@ public partial class Pelicula
 
     public int Duracion { get; set; }
 
-    public string? Clasificacion { get; set; }
+    public string Clasificacion { get; set; }
 
     public string Director { get; set; } = null!;
 
-    public string PosterImage { get; set; } = null!;
+    public string? PosterImage { get; set; } = null!;
 
     public virtual ICollection<Funcion> Funcions { get; set; } = new List<Funcion>();
 }

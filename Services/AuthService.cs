@@ -1,22 +1,29 @@
 ﻿using cine_back.Data;
 using cine_back.Dtos;
 using cine_back.Infrastructure;
+using cine_back.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Sockets;
-
 using System.Reflection.Metadata.Ecma335;
 using System.Runtime.InteropServices;
+using System.Security.Claims;
+using System.Text;
 
 namespace cine_back.Services
 {
     public class AuthService : IAuthService
     {
         private readonly CineDbContext _db;
+        private readonly IConfiguration _config;
 
-    public AuthService(CineDbContext db)
+    public AuthService(CineDbContext db, IConfiguration configuration)
         {
             _db = db;
+            _config = configuration;
+            
         }
 
         public async Task<NetworkCheckResponseDto> CheckNetworkAsync(string clientIp)
@@ -109,14 +116,16 @@ namespace cine_back.Services
                 };
             }
 
-            // 5. Login Exitoso para usuarios reales
+            string tokenGenerado = GenerarTokenJwt(vendedor, "Vendedor");
+
             return new LoginResponseDto
             {
                 Success = true,
                 Message = "Inicio de sesión exitoso.",
                 IdVendedor = vendedor.IdVendedor,
                 Nombre = vendedor.Nombre,
-                Rol = nombreRol
+                Rol = "Vendedor",
+                Token = tokenGenerado // <-- Asignamos el token
             };
         }
 
@@ -151,6 +160,31 @@ namespace cine_back.Services
             }
 
             return clientIp;
+        }
+        //metodo de token 
+        private string GenerarTokenJwt(Vendedor vendedor, string nombreRol)
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.UTF8.GetBytes(_config["Jwt:Key"]!);
+
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(new[]
+                {
+            new Claim(ClaimTypes.NameIdentifier, vendedor.IdVendedor.ToString()),
+            new Claim(ClaimTypes.Name, vendedor.Nombre),
+            new Claim(ClaimTypes.Role, nombreRol)
+        }),
+                Expires = DateTime.UtcNow.AddHours(8), // El token durará 8 horas de turno
+                Issuer = _config["Jwt:Issuer"],
+                Audience = _config["Jwt:Audience"],
+                SigningCredentials = new SigningCredentials(
+                    new SymmetricSecurityKey(key),
+                    SecurityAlgorithms.HmacSha256Signature)
+            };
+
+            var token = tokenHandler.CreateToken(tokenDescriptor);
+            return tokenHandler.WriteToken(token);
         }
     }
 }
