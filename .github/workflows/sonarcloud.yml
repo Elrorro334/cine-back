@@ -1,0 +1,55 @@
+name: SonarQube Cloud Analysis
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sonarcloud:
+    name: SonarQube Cloud Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar código del repositorio (historial completo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurar Java 17 (Requerido por SonarScanner)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Configurar SDK de .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Instalar SonarScanner para .NET
+        run: |
+          dotnet tool install --global dotnet-sonarscanner
+
+      - name: Compilar y Analizar con SonarCloud
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet-sonarscanner begin \
+            /k:"${{ vars.SONAR_PROJECT_KEY || 'elrorro334_cine-back' }}" \
+            /o:"${{ vars.SONAR_ORGANIZATION || 'elrorro334' }}" \
+            /d:sonar.token="${{ secrets.SONAR_TOKEN }}" \
+            /d:sonar.host.url="https://sonarcloud.io"
+          
+          dotnet build cine-back.csproj --configuration Release
+          
+          dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
