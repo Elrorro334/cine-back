@@ -1,4 +1,3 @@
 <Solution>
   <Project Path="cine-back.csproj" />
-  <Project Path="cine-back.Tests/cine-back.Tests.csproj" />
 </Solution>
