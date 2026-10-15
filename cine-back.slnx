@@ -1,4 +1,7 @@
 <Solution>
   <Project Path="cine-back.csproj" />
   <Project Path="cine-back.Tests/cine-back.Tests.csproj" />
+  <Project Path="Cine.Application/Cine.Application.csproj" Id="c41646bd-280d-492d-9150-ce4b825db792" />
+  <Project Path="Cine.Domain/Cine.Domain.csproj" Id="64d34bb0-d4a9-4da0-b7c6-cb2650e2ca1b" />
+  <Project Path="Cine.Infrastructure/Cine.Infrastructure.csproj" Id="2b2b7514-4066-4616-8597-d519fce4b2be" />
 </Solution>

@@ -1,5 +1,5 @@
-﻿using cine_back.Dtos;
-using cine_back.Infrastructure;
+﻿using Cine.Application.Dtos;
+using Cine.Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 namespace cine_back.Controllers;

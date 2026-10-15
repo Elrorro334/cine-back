@@ -1,4 +1,4 @@
-﻿using cine_back.Dtos;
+﻿using Cine.Application.Dtos;
 
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;

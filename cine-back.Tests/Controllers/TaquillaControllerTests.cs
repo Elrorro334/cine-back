@@ -1,6 +1,6 @@
 ﻿using cine_back.Controllers;
-using cine_back.Dtos;
-using cine_back.Infrastructure;
+using Cine.Application.Dtos;
+using Cine.Application.Interfaces;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Moq;

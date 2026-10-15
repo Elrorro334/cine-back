@@ -1,11 +1,9 @@
-using cine_back.Data;
-using cine_back.Infrastructure;
-using cine_back.Services;
+using Cine.Application;
+using Cine.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
 using Microsoft.OpenApi.Models;
 using System.Text;
 
@@ -15,13 +13,13 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowPWA", policy =>
     {
-        policy.AllowAnyOrigin() // En producción se cambiará por la URL de la PWA
+        policy.AllowAnyOrigin()
               .AllowAnyMethod()
               .AllowAnyHeader();
     });
 });
 
-//configuracion del jwt 
+// Configuración de JWT
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -37,19 +35,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
+// Registrar servicios de las capas
+builder.Services.AddApplicationServices();
+builder.Services.AddInfrastructureServices(builder.Configuration);
 
-//  Registrar DbContext con la cadena de appsettings.Development.json
-builder.Services.AddDbContext<CineDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
-//injeccion de servicios
-builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<ITaquillaService, TaquillaService>();
-//
+
 builder.Services.AddControllers();
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    // Habilitar el botón "Authorize" en la interfaz de Swagger
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "Autorización JWT. \r\n\r\n Escribe 'Bearer' [espacio] y luego pega tu token.\r\n\r\nEjemplo: 'Bearer eyJhbGci...'",
@@ -75,15 +70,13 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-//  Middleware para detectar IP real cliente (HU-04)
+// Middleware para detectar IP real del cliente (HU-04)
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
     options.KnownIPNetworks.Clear();
     options.KnownProxies.Clear();
 });
-
-
 
 var app = builder.Build();
 
@@ -93,9 +86,10 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Cine Xilotzin API v1");
-        c.RoutePrefix = string.Empty; // Hace que Swagger cargue directamente en la raíz (https://localhost:PORT/)
+        c.RoutePrefix = string.Empty;
     });
 }
+
 app.UseForwardedHeaders();
 app.UseHttpsRedirection();
 app.UseCors("AllowPWA");

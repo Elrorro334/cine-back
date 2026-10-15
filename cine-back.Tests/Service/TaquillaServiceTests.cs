@@ -1,6 +1,6 @@
-﻿using cine_back.Data;
-using cine_back.Models;
-using cine_back.Services;
+﻿using Cine.Application.Services;
+using Cine.Domain.Entities;
+using Cine.Infrastructure.Persistence;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 
