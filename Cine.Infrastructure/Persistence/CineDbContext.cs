@@ -428,5 +428,7 @@ public partial class CineDbContext : DbContext, ICineDbContext
         OnModelCreatingPartial(modelBuilder);
     }
 
-    partial void OnModelCreatingPartial(ModelBuilder modelBuilder);
+    void OnModelCreatingPartial(ModelBuilder modelBuilder)
+    {
+    }
 }
