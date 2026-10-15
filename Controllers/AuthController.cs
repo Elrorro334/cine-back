@@ -16,9 +16,12 @@ public class AuthController : ControllerBase
     }
 
     [HttpGet("check-network")]
-    public async Task<ActionResult<NetworkCheckResponseDto>> CheckNetwork()
+    public async Task<ActionResult<NetworkCheckResponseDto>> CheckNetwork([FromHeader(Name = "X-Forwarded-For")] string? forwardedFor = null)
     {
-        string clientIp = GetClientIpAddress();
+        string clientIp = forwardedFor?.Split(',')[0].Trim()
+            ?? HttpContext.Connection.RemoteIpAddress?.ToString()
+            ?? "127.0.0.1";
+
         var result = await _authService.CheckNetworkAsync(clientIp);
 
         if (!result.IsAllowed)
