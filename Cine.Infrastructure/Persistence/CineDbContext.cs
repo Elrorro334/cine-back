@@ -430,5 +430,6 @@ public partial class CineDbContext : DbContext, ICineDbContext
 
     void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        // Método vacío intencionalmente. Reservado para futura configuración.
     }
 }

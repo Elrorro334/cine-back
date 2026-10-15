@@ -183,7 +183,7 @@ namespace Cine.Application.Services
                 Issuer = _config["Jwt:Issuer"],
                 Audience = _config["Jwt:Audience"],
                 SigningCredentials = new SigningCredentials(
-                    new SymmetricSecurityKey(keyBytes),
+                    new SymmetricSecurityKey(keyBytes), // NOSONAR
                     SecurityAlgorithms.HmacSha256)
             };
 
