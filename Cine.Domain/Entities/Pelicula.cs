@@ -13,7 +13,7 @@ namespace Cine.Domain.Entities
 
         public int Duracion { get; set; }
 
-        public string Clasificacion { get; set; }
+        public string Clasificacion { get; set; } = string.Empty;
 
         public string Director { get; set; } = null!;
 
