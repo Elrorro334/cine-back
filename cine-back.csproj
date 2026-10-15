@@ -1,18 +1,46 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<RootNamespace>cine_back</RootNamespace>
+		<UserSecretsId>e734ac7a-1137-4d8a-9666-c712fa95f1cc</UserSecretsId>
+		<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+		<DockerfileContext>.</DockerfileContext>
+	</PropertyGroup>
 
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>cine_back</RootNamespace>
-    <UserSecretsId>e734ac7a-1137-4d8a-9666-c712fa95f1cc</UserSecretsId>
-    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
-    <DockerfileContext>.</DockerfileContext>
-  </PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.13" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.13" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.13" />
+		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.24.2-preview.1" />
+		<PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+		<PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
-    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.24.2-preview.1" />
-  </ItemGroup>
+	<!-- Bloque para ignorar carpetas anidadas y evitar duplicados -->
+	<ItemGroup>
+		<Compile Remove="cine-back.Tests\**" />
+		<Compile Remove="Cine.Application\**" />
+		<Compile Remove="Cine.Domain\**" />
+		<Compile Remove="Cine.Infrastructure\**" />
+		<Content Remove="cine-back.Tests\**" />
+		<Content Remove="Cine.Application\**" />
+		<Content Remove="Cine.Domain\**" />
+		<Content Remove="Cine.Infrastructure\**" />
+		<EmbeddedResource Remove="cine-back.Tests\**" />
+		<EmbeddedResource Remove="Cine.Application\**" />
+		<EmbeddedResource Remove="Cine.Domain\**" />
+		<EmbeddedResource Remove="Cine.Infrastructure\**" />
+		<None Remove="cine-back.Tests\**" />
+		<None Remove="Cine.Application\**" />
+		<None Remove="Cine.Domain\**" />
+		<None Remove="Cine.Infrastructure\**" />
+	</ItemGroup>
 
+	<ItemGroup>
+		<ProjectReference Include="Cine.Application\Cine.Application.csproj" />
+		<ProjectReference Include="Cine.Infrastructure\Cine.Infrastructure.csproj" />
+	</ItemGroup>
 </Project>
