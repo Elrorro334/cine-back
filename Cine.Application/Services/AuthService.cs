@@ -162,13 +162,13 @@ namespace Cine.Application.Services
         //metodo de token 
         private string GenerarTokenJwt(Vendedor vendedor, string nombreRol)
         {
-            var jwtKey = _config["Jwt:Key"]
-                ?? throw new InvalidOperationException("La clave JWT no está configurada en appsettings.");
+            var secretKey = _config["Jwt:Key"];
+            if (string.IsNullOrWhiteSpace(secretKey))
+            {
+                throw new InvalidOperationException("La clave JWT no está configurada en appsettings.");
+            }
 
-            var issuer = _config["Jwt:Issuer"];
-            var audience = _config["Jwt:Audience"];
-
-            var key = Encoding.UTF8.GetBytes(jwtKey);
+            var keyBytes = Encoding.UTF8.GetBytes(secretKey);
             var tokenHandler = new JwtSecurityTokenHandler();
 
             var tokenDescriptor = new SecurityTokenDescriptor
@@ -179,12 +179,12 @@ namespace Cine.Application.Services
             new Claim(ClaimTypes.Name, vendedor.Nombre),
             new Claim(ClaimTypes.Role, nombreRol)
         }),
-                Expires = DateTime.UtcNow.AddHours(8), // Turno de 8 horas
-                Issuer = issuer,
-                Audience = audience,
+                Expires = DateTime.UtcNow.AddHours(8),
+                Issuer = _config["Jwt:Issuer"],
+                Audience = _config["Jwt:Audience"],
                 SigningCredentials = new SigningCredentials(
-                    new SymmetricSecurityKey(key),
-                    SecurityAlgorithms.HmacSha256Signature)
+                    new SymmetricSecurityKey(keyBytes),
+                    SecurityAlgorithms.HmacSha256)
             };
 
             var token = tokenHandler.CreateToken(tokenDescriptor);
