@@ -129,7 +129,7 @@ namespace Cine.Application.Services
 
         /// Resuelve dinámicamente la IP física del adaptador de red (solo para entorno de desarrollo local).
         /// Permite que las pruebas en Swagger (localhost / ::1) sean validadas contra la BD.
-        private string ResolveClientIp(string clientIp)
+        private static string ResolveClientIp(string clientIp)
         {
             // Si la petición viene de la misma máquina, buscamos la IP del adaptador de red que empiece con 192.168.
             // (Esto evita que tome IPs virtuales de Docker/WSL2 tipo 172.x.x.x)
@@ -162,8 +162,14 @@ namespace Cine.Application.Services
         //metodo de token 
         private string GenerarTokenJwt(Vendedor vendedor, string nombreRol)
         {
+            var jwtKey = _config["Jwt:Key"]
+                ?? throw new InvalidOperationException("La clave JWT no está configurada en appsettings.");
+
+            var issuer = _config["Jwt:Issuer"];
+            var audience = _config["Jwt:Audience"];
+
+            var key = Encoding.UTF8.GetBytes(jwtKey);
             var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(_config["Jwt:Key"]!);
 
             var tokenDescriptor = new SecurityTokenDescriptor
             {
@@ -173,9 +179,9 @@ namespace Cine.Application.Services
             new Claim(ClaimTypes.Name, vendedor.Nombre),
             new Claim(ClaimTypes.Role, nombreRol)
         }),
-                Expires = DateTime.UtcNow.AddHours(8), // El token durará 8 horas de turno
-                Issuer = _config["Jwt:Issuer"],
-                Audience = _config["Jwt:Audience"],
+                Expires = DateTime.UtcNow.AddHours(8), // Turno de 8 horas
+                Issuer = issuer,
+                Audience = audience,
                 SigningCredentials = new SigningCredentials(
                     new SymmetricSecurityKey(key),
                     SecurityAlgorithms.HmacSha256Signature)
@@ -183,6 +189,7 @@ namespace Cine.Application.Services
 
             var token = tokenHandler.CreateToken(tokenDescriptor);
             return tokenHandler.WriteToken(token);
+        }
         }
     }
 }
