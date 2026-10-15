@@ -52,9 +52,9 @@ jobs:
             /d:sonar.host.url="https://sonarcloud.io" \
             /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
 
-          dotnet build cine-back.sln --configuration Release
+          dotnet build --configuration Release
 
-          dotnet test cine-back.Tests/cine-back.Tests.csproj \
+          dotnet test \
             --configuration Release \
             --no-build \
             /p:CollectCoverage=true \
