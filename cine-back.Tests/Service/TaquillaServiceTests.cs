@@ -213,7 +213,16 @@ public class TaquillaServiceTests
     {
         using var context = GetInMemoryDbContext();
 
-        var pelicula = new Pelicula { IdPelicula = 200, Titulo = "Con Dependencias" };
+        var pelicula = new Pelicula
+        {
+            IdPelicula = 200,
+            Titulo = "Con Dependencias",
+            Director = "Director Test",
+            Sinopsis = "Sinopsis Test",
+            Duracion = 120,
+            Clasificacion = "B",
+            PosterImage = "/test.jpg"
+        };
         var funcion = new Funcion { IdFuncion = 201, IdPelicula = 200, FechaFuncion = DateTime.Today, Precio = 50 };
         var butacaEstado = new EstadoButacaFuncion { IdEstado = 202, IdFuncion = 201 };
         var preorden = new Preorden { IdPreorden = 203, IdFuncion = 201 };
