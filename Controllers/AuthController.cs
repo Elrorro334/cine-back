@@ -64,4 +64,5 @@ public class AuthController : ControllerBase
 
         return HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
     }
+
 }

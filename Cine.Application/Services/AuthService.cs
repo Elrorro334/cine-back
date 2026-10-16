@@ -114,7 +114,8 @@ namespace Cine.Application.Services
                 };
             }
 
-            string tokenGenerado = GenerarTokenJwt(vendedor, "Vendedor");
+            // Usar el rol dinámico obtenido de la base de datos
+            string tokenGenerado = GenerarTokenJwt(vendedor, nombreRol);
 
             return new LoginResponseDto
             {
@@ -122,8 +123,8 @@ namespace Cine.Application.Services
                 Message = "Inicio de sesión exitoso.",
                 IdVendedor = vendedor.IdVendedor,
                 Nombre = vendedor.Nombre,
-                Rol = "Vendedor",
-                Token = tokenGenerado // <-- Asignamos el token
+                Rol = nombreRol, 
+                Token = tokenGenerado
             };
         }
 
