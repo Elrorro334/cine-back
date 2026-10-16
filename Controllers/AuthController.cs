@@ -1,7 +1,7 @@
 ﻿using Cine.Application.Dtos;
 using Cine.Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+
 namespace cine_back.Controllers;
 
 [ApiController]
@@ -16,11 +16,10 @@ public class AuthController : ControllerBase
     }
 
     [HttpGet("check-network")]
-    public async Task<ActionResult<NetworkCheckResponseDto>> CheckNetwork([FromHeader(Name = "X-Forwarded-For")] string? forwardedFor = null)
+    public async Task<ActionResult<NetworkCheckResponseDto>> CheckNetwork(
+        [FromHeader(Name = "X-Forwarded-For")] string? forwardedFor = null)
     {
-        string clientIp = forwardedFor?.Split(',')[0].Trim()
-            ?? HttpContext.Connection.RemoteIpAddress?.ToString()
-            ?? "127.0.0.1";
+        string clientIp = ExtractClientIp(forwardedFor);
 
         var result = await _authService.CheckNetworkAsync(clientIp);
 
@@ -33,14 +32,16 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
-    public async Task<ActionResult<LoginResponseDto>> Login([FromBody] LoginRequestDto request)
+    public async Task<ActionResult<LoginResponseDto>> Login(
+        [FromBody] LoginRequestDto request,
+        [FromHeader(Name = "X-Forwarded-For")] string? forwardedFor = null)
     {
-        string clientIp = GetClientIpAddress();
+        string clientIp = ExtractClientIp(forwardedFor);
         var result = await _authService.LoginAsync(request, clientIp);
 
         if (!result.Success)
         {
-            if (result.Message.Contains("red local"))
+            if (result.Message.Contains("red local", StringComparison.OrdinalIgnoreCase))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, result);
             }
@@ -50,12 +51,12 @@ public class AuthController : ControllerBase
         return Ok(result);
     }
 
-    private string GetClientIpAddress()
+    private string ExtractClientIp(string? forwardedFor)
     {
-        if (Request.Headers.TryGetValue("X-Forwarded-For", out var forwardedFor))
+        if (!string.IsNullOrWhiteSpace(forwardedFor))
         {
-            var ipList = forwardedFor.ToString().Split(',');
-            if (ipList.Length > 0)
+            var ipList = forwardedFor.Split(',');
+            if (ipList.Length > 0 && !string.IsNullOrWhiteSpace(ipList[0]))
             {
                 return ipList[0].Trim();
             }
@@ -63,7 +64,4 @@ public class AuthController : ControllerBase
 
         return HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
     }
-
-  
-
 }

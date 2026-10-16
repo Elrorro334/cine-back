@@ -42,6 +42,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # Inyección de configuración mediante Variables de Entorno para IConfiguration
+          ConnectionStrings__DefaultConnection: "Server=(localdb)\\mssqllocaldb;Database=TestDb;Trusted_Connection=True;"
+          Jwt__Key: "ClaveDePruebaParaEntornoDeIntegracionContinuaEnGitHubActions123456"
+          Jwt__Issuer: "CineTeatroXilotzinApi"
+          Jwt__Audience: "CineTeatroXilotzinPWA"
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
           
