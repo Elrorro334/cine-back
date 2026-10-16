@@ -1,4 +1,4 @@
-﻿using Cine.Application.Services;
+using Cine.Application.Services;
 using Cine.Domain.Entities;
 using Cine.Infrastructure.Persistence;
 using FluentAssertions;
@@ -8,7 +8,7 @@ namespace cine_back.Tests.Services;
 
 public class TaquillaServiceTests
 {
-    private CineDbContext GetInMemoryDbContext()
+    private static CineDbContext GetInMemoryDbContext()
     {
         var options = new DbContextOptionsBuilder<CineDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
