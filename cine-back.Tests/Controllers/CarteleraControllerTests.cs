@@ -170,4 +170,36 @@ public class CarteleraControllerTests
         var badRequest = result as BadRequestObjectResult;
         badRequest.Should().NotBeNull();
     }
+
+    [Fact]
+    public async Task EliminarPelicula_WhenSuccessful_ReturnsOk()
+    {
+        // Arrange
+        _taquillaServiceMock.Setup(s => s.EliminarPeliculaAsync(50))
+            .ReturnsAsync(true);
+
+        // Act
+        var result = await _controller.EliminarPelicula(50);
+
+        // Assert
+        var okResult = result as OkObjectResult;
+        okResult.Should().NotBeNull();
+        okResult!.StatusCode.Should().Be(200);
+    }
+
+    [Fact]
+    public async Task EliminarPelicula_WhenNotFound_ReturnsNotFound()
+    {
+        // Arrange
+        _taquillaServiceMock.Setup(s => s.EliminarPeliculaAsync(999))
+            .ReturnsAsync(false);
+
+        // Act
+        var result = await _controller.EliminarPelicula(999);
+
+        // Assert
+        var notFoundResult = result as NotFoundObjectResult;
+        notFoundResult.Should().NotBeNull();
+        notFoundResult!.StatusCode.Should().Be(404);
+    }
 }
