@@ -1,4 +1,4 @@
-﻿using Cine.Domain.Entities;
+using Cine.Domain.Entities;
 using Microsoft.Extensions.Configuration;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -64,13 +64,22 @@ namespace Cine.Application.Services
             // Si NO hay admins reales, permitimos el acceso con la cuenta temporal
             if (!existeAdminReal && request.NombreUsuario == "admin" && request.Password == "admin123")
             {
+                var adminDummy = new Cine.Domain.Entities.Vendedor
+                {
+                    IdVendedor = 1,
+                    Nombre = "Administrador Supremo",
+                    EstadoActivo = true
+                };
+                string tokenAdmin = GenerarTokenJwt(adminDummy, "Admin");
+
                 return new LoginResponseDto
                 {
                     Success = true,
                     Message = "Inicio de sesión exitoso (Admin de rescate habilitado).",
                     IdVendedor = 0,
                     Nombre = "Administrador Supremo",
-                    Rol = "Admin"
+                    Rol = "Admin",
+                    Token = tokenAdmin
                 };
             }
             // ====================================================================
