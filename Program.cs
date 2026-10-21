@@ -9,11 +9,15 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Configuración de CORS desacoplada por ambientes (HU-03 / Lineamiento 3)
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? new[] { "http://localhost:3000", "https://localhost:3000", "http://localhost:5173", "https://localhost:5173" };
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowPWA", policy =>
     {
-        policy.WithOrigins("http://localhost:3000", "https://localhost:3000")
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyMethod()
               .AllowAnyHeader();
     });
@@ -38,7 +42,6 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 // Registrar servicios de las capas
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
-
 
 builder.Services.AddControllers();
 

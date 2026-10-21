@@ -9,5 +9,11 @@ namespace Cine.Application.Interfaces
         Task<TmdbMovieDetailDto?> ObtenerDetalleTmdbAsync(int tmdbId);
         Task<PeliculaCarteleraDto> RegistrarPeliculaDesdeTmdbAsync(RegistrarPeliculaDto dto);
         Task<bool> EliminarPeliculaAsync(int idPelicula);
+        Task<List<PeliculaCarteleraDto>> SincronizarCatalogoBaseAsync();
+        Task<List<PromocionDto>> ObtenerPromocionesAsync();
+        Task<FuncionButacasDto> ObtenerButacasFuncionAsync(int idFuncion);
+        Task<List<ProductoDto>> ObtenerProductosDulceriaAsync();
+        Task<VentaConfirmadaDto> RegistrarVentaAsync(RegistrarVentaDto dto);
+        Task<PreordenDto?> ObtenerPreordenAsync(string codigoQr);
     }
 }
