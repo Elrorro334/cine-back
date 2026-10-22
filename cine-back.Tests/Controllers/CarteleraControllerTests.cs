@@ -21,7 +21,6 @@ public class CarteleraControllerTests
     [Fact]
     public async Task GetCartelera_ReturnsOkWithCartelera()
     {
-        // Arrange
         var mockCartelera = new List<PeliculaCarteleraDto>
         {
             new PeliculaCarteleraDto
@@ -35,10 +34,8 @@ public class CarteleraControllerTests
         _taquillaServiceMock.Setup(s => s.ObtenerCarteleraHoyAsync(null))
             .ReturnsAsync(mockCartelera);
 
-        // Act
         var result = await _controller.GetCartelera(null);
 
-        // Assert
         var okResult = result as OkObjectResult;
         okResult.Should().NotBeNull();
         okResult!.StatusCode.Should().Be(200);
@@ -49,9 +46,37 @@ public class CarteleraControllerTests
     }
 
     [Fact]
+    public async Task GetPromociones_ReturnsOkWithPromociones()
+    {
+        var mockPromociones = new List<PromocionDto>
+        {
+            new PromocionDto
+            {
+                Id = 1,
+                Titulo = "Promo 2x1",
+                Tag = "Miércoles",
+                Descripcion = "2x1 en boletos",
+                Fecha = "Todos los miércoles",
+                Bg = "bg-red",
+                Icono = "fa-ticket"
+            }
+        };
+
+        _taquillaServiceMock.Setup(s => s.ObtenerPromocionesAsync())
+            .ReturnsAsync(mockPromociones);
+
+        var result = await _controller.GetPromociones();
+
+        var okResult = result as OkObjectResult;
+        okResult.Should().NotBeNull();
+        okResult!.StatusCode.Should().Be(200);
+        var list = okResult.Value as List<PromocionDto>;
+        list.Should().HaveCount(1);
+    }
+
+    [Fact]
     public async Task BuscarTmdb_WithValidQuery_ReturnsOkWithResults()
     {
-        // Arrange
         var mockResults = new List<TmdbSearchResultDto>
         {
             new TmdbSearchResultDto
@@ -65,10 +90,8 @@ public class CarteleraControllerTests
         _taquillaServiceMock.Setup(s => s.BuscarTmdbAsync("Batman"))
             .ReturnsAsync(mockResults);
 
-        // Act
         var result = await _controller.BuscarTmdb("Batman");
 
-        // Assert
         var okResult = result as OkObjectResult;
         okResult.Should().NotBeNull();
         okResult!.StatusCode.Should().Be(200);
@@ -80,10 +103,8 @@ public class CarteleraControllerTests
     [Fact]
     public async Task BuscarTmdb_WithEmptyQuery_ReturnsBadRequest()
     {
-        // Act
         var result = await _controller.BuscarTmdb("   ");
 
-        // Assert
         var badRequest = result as BadRequestObjectResult;
         badRequest.Should().NotBeNull();
         badRequest!.StatusCode.Should().Be(400);
@@ -92,7 +113,6 @@ public class CarteleraControllerTests
     [Fact]
     public async Task DetalleTmdb_WhenFound_ReturnsOk()
     {
-        // Arrange
         var mockDetail = new TmdbMovieDetailDto
         {
             TmdbId = 155,
@@ -103,10 +123,8 @@ public class CarteleraControllerTests
         _taquillaServiceMock.Setup(s => s.ObtenerDetalleTmdbAsync(155))
             .ReturnsAsync(mockDetail);
 
-        // Act
         var result = await _controller.DetalleTmdb(155);
 
-        // Assert
         var okResult = result as OkObjectResult;
         okResult.Should().NotBeNull();
         okResult!.StatusCode.Should().Be(200);
@@ -115,14 +133,11 @@ public class CarteleraControllerTests
     [Fact]
     public async Task DetalleTmdb_WhenNotFound_ReturnsNotFound()
     {
-        // Arrange
         _taquillaServiceMock.Setup(s => s.ObtenerDetalleTmdbAsync(999))
             .ReturnsAsync((TmdbMovieDetailDto?)null);
 
-        // Act
         var result = await _controller.DetalleTmdb(999);
 
-        // Assert
         var notFoundResult = result as NotFoundObjectResult;
         notFoundResult.Should().NotBeNull();
         notFoundResult!.StatusCode.Should().Be(404);
@@ -131,7 +146,6 @@ public class CarteleraControllerTests
     [Fact]
     public async Task RegistrarPelicula_WithValidDto_ReturnsCreated()
     {
-        // Arrange
         var dto = new RegistrarPeliculaDto
         {
             Titulo = "Avatar 3",
@@ -148,10 +162,8 @@ public class CarteleraControllerTests
         _taquillaServiceMock.Setup(s => s.RegistrarPeliculaDesdeTmdbAsync(dto))
             .ReturnsAsync(created);
 
-        // Act
         var result = await _controller.RegistrarPelicula(dto);
 
-        // Assert
         var createdResult = result as CreatedResult;
         createdResult.Should().NotBeNull();
         createdResult!.StatusCode.Should().Be(201);
@@ -160,28 +172,40 @@ public class CarteleraControllerTests
     [Fact]
     public async Task RegistrarPelicula_WithEmptyTitle_ReturnsBadRequest()
     {
-        // Arrange
         var dto = new RegistrarPeliculaDto { Titulo = "" };
 
-        // Act
         var result = await _controller.RegistrarPelicula(dto);
 
-        // Assert
         var badRequest = result as BadRequestObjectResult;
         badRequest.Should().NotBeNull();
     }
 
     [Fact]
+    public async Task SincronizarCatalogoBase_ReturnsOkWithMovies()
+    {
+        var mockList = new List<PeliculaCarteleraDto>
+        {
+            new PeliculaCarteleraDto { IdPelicula = 1, Titulo = "Spiderman" }
+        };
+
+        _taquillaServiceMock.Setup(s => s.SincronizarCatalogoBaseAsync())
+            .ReturnsAsync(mockList);
+
+        var result = await _controller.SincronizarCatalogoBase();
+
+        var okResult = result as OkObjectResult;
+        okResult.Should().NotBeNull();
+        okResult!.StatusCode.Should().Be(200);
+    }
+
+    [Fact]
     public async Task EliminarPelicula_WhenSuccessful_ReturnsOk()
     {
-        // Arrange
         _taquillaServiceMock.Setup(s => s.EliminarPeliculaAsync(50))
             .ReturnsAsync(true);
 
-        // Act
         var result = await _controller.EliminarPelicula(50);
 
-        // Assert
         var okResult = result as OkObjectResult;
         okResult.Should().NotBeNull();
         okResult!.StatusCode.Should().Be(200);
@@ -190,14 +214,11 @@ public class CarteleraControllerTests
     [Fact]
     public async Task EliminarPelicula_WhenNotFound_ReturnsNotFound()
     {
-        // Arrange
         _taquillaServiceMock.Setup(s => s.EliminarPeliculaAsync(999))
             .ReturnsAsync(false);
 
-        // Act
         var result = await _controller.EliminarPelicula(999);
 
-        // Assert
         var notFoundResult = result as NotFoundObjectResult;
         notFoundResult.Should().NotBeNull();
         notFoundResult!.StatusCode.Should().Be(404);

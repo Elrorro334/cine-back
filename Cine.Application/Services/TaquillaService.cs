@@ -1,220 +1,144 @@
+using System.Globalization;
 using System.Text.Json;
-
 using Cine.Application.Dtos;
-
 using Cine.Application.Interfaces;
-
 using Cine.Domain.Entities;
-
 using Microsoft.EntityFrameworkCore;
-
 using Microsoft.Extensions.Configuration;
-
-
 
 namespace Cine.Application.Services;
 
-
-
 public class TaquillaService : ITaquillaService
-
 {
+    private static readonly Dictionary<string, string> MapaCertificaciones = new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "R", "C" },
+        { "PG-13", "B15" },
+        { "PG", "B" },
+        { "G", "AA" },
+        { "NC-17", "C" },
+        { "A", "A" },
+        { "AA", "AA" },
+        { "B", "B" },
+        { "B15", "B15" },
+        { "C", "C" }
+    };
+
+    private static readonly Dictionary<string, string> ImagenesDulceria = new()
+    {
+        { "7501001", "https://images.unsplash.com/photo-1585647347384-2593bc35786b?q=80&w=400&auto=format&fit=crop" },
+        { "7501002", "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?q=80&w=400&auto=format&fit=crop" },
+        { "7501003", "https://images.unsplash.com/photo-1513456852971-30c0b8199d4d?q=80&w=400&auto=format&fit=crop" },
+        { "7501004", "https://images.unsplash.com/photo-1566478989037-e924e50cb792?q=80&w=400&auto=format&fit=crop" },
+        { "7501005", "https://images.pexels.com/photos/29269189/pexels-photo-29269189.jpeg?auto=compress&cs=tinysrgb&dpr=1&w=400" },
+        { "7501006", "https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=400&auto=format&fit=crop" },
+        { "7501007", "https://images.unsplash.com/photo-1604382354936-07c5d9983bd3?q=80&w=400&auto=format&fit=crop" },
+        { "COMBO01", "https://images.unsplash.com/photo-1585647347384-2593bc35786b?q=80&w=400" },
+        { "COMBO02", "https://images.unsplash.com/photo-1513456852971-30c0b8199d4d?q=80&w=400" },
+        { "COMBO03", "https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=400" }
+    };
 
     private readonly ICineDbContext _db;
-
     private readonly HttpClient _httpClient;
-
     private readonly string _tmdbApiKey;
 
-
-
     public TaquillaService(ICineDbContext context, HttpClient? httpClient = null, IConfiguration? config = null)
-
     {
-
         _db = context;
-
         _httpClient = httpClient ?? new HttpClient();
-
         _tmdbApiKey = config?["Tmdb:ApiKey"] ?? "a9b90184f1235d3b78c24e4b31e993b8";
-
     }
-
-
 
     public async Task<List<PeliculaCarteleraDto>> ObtenerCarteleraHoyAsync(string? busqueda = null)
-
     {
-
         var fechaHoy = DateTime.Today;
 
-
-
         var query = _db.Peliculas
-
             .Where(p => p.Funcions.Any(f => f.FechaFuncion.Date == fechaHoy));
 
-
-
         if (!string.IsNullOrWhiteSpace(busqueda))
-
         {
-
             query = query.Where(p => p.Titulo.Contains(busqueda));
-
         }
-
-
 
         var cartelera = await query.Select(p => new PeliculaCarteleraDto
-
         {
-
             IdPelicula = p.IdPelicula,
-
             Titulo = p.Titulo,
-
             Sinopsis = p.Sinopsis ?? string.Empty,
-
             Duracion = p.Duracion,
-
             Clasificacion = p.Clasificacion ?? string.Empty,
-
             Director = p.Director ?? string.Empty,
-
             poster_image = p.PosterImage ?? string.Empty,
 
-
-
             Funciones = p.Funcions
-
                 .Where(f => f.FechaFuncion.Date == fechaHoy)
-
                 .OrderBy(f => f.HoraInicio)
-
                 .Select(f => new FuncionHorarioDto
-
                 {
-
                     IdFuncion = f.IdFuncion,
-
                     Hora = f.HoraInicio.ToString(),
-
                     NombreSala = f.IdSalaNavigation != null ? f.IdSalaNavigation.NombreSala : string.Empty,
-
                     Precio = f.Precio
-
                 })
-
                 .ToList()
-
         }).ToListAsync();
 
-
-
         return cartelera;
-
     }
-
-
 
     public async Task<List<TmdbSearchResultDto>> BuscarTmdbAsync(string query)
-
     {
-
         if (string.IsNullOrWhiteSpace(query)) return new List<TmdbSearchResultDto>();
 
-
-
         try
-
         {
-
             var url = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&language=es-MX&query={Uri.EscapeDataString(query.Trim())}";
-
             var response = await _httpClient.GetAsync(url);
-
             if (!response.IsSuccessStatusCode) return new List<TmdbSearchResultDto>();
 
-
-
             var json = await response.Content.ReadAsStringAsync();
-
             using var doc = JsonDocument.Parse(json);
 
-
-
             var resultados = new List<TmdbSearchResultDto>();
-
             if (doc.RootElement.TryGetProperty("results", out var resultsElement) && resultsElement.ValueKind == JsonValueKind.Array)
-
             {
-
                 foreach (var item in resultsElement.EnumerateArray())
-
                 {
-
-                    var id = item.TryGetProperty("id", out var idProp) ? idProp.GetInt32() : 0;
-
-                    var titulo = item.TryGetProperty("title", out var titleProp) ? titleProp.GetString() ?? "" : "";
-
-                    var original = item.TryGetProperty("original_title", out var origProp) ? origProp.GetString() ?? "" : "";
-
-                    var overview = item.TryGetProperty("overview", out var overProp) ? overProp.GetString() ?? "" : "";
-
-                    var poster = item.TryGetProperty("poster_path", out var posterProp) ? posterProp.GetString() ?? "" : "";
-
-                    var release = item.TryGetProperty("release_date", out var relProp) ? relProp.GetString() ?? "" : "";
-
-                    var rating = item.TryGetProperty("vote_average", out var voteProp) ? voteProp.GetDouble() : 0.0;
-
-
-
-                    var year = !string.IsNullOrEmpty(release) && release.Length >= 4 ? release.Substring(0, 4) : "";
-
-
-
-                    resultados.Add(new TmdbSearchResultDto
-
-                    {
-
-                        TmdbId = id,
-
-                        Titulo = titulo,
-
-                        TituloOriginal = original,
-
-                        Sinopsis = overview,
-
-                        PosterPath = poster, // Relativo estricto ej: "/abc.jpg"
-
-                        ReleaseYear = year,
-
-                        Rating = Math.Round(rating, 1)
-
-                    });
-
+                    resultados.Add(MapearResultadoBusquedaTmdb(item));
                 }
-
             }
 
-
-
             return resultados;
-
         }
-
         catch
-
         {
-
             return new List<TmdbSearchResultDto>();
-
         }
-
     }
 
+    private static TmdbSearchResultDto MapearResultadoBusquedaTmdb(JsonElement item)
+    {
+        var id = item.TryGetProperty("id", out var idProp) ? idProp.GetInt32() : 0;
+        var titulo = GetJsonString(item, "title");
+        var original = GetJsonString(item, "original_title");
+        var overview = GetJsonString(item, "overview");
+        var poster = GetJsonString(item, "poster_path");
+        var release = GetJsonString(item, "release_date");
+        var rating = item.TryGetProperty("vote_average", out var voteProp) ? voteProp.GetDouble() : 0.0;
+        var year = release.Length >= 4 ? release.Substring(0, 4) : "";
 
+        return new TmdbSearchResultDto
+        {
+            TmdbId = id,
+            Titulo = titulo,
+            TituloOriginal = original,
+            Sinopsis = overview,
+            PosterPath = poster,
+            ReleaseYear = year,
+            Rating = Math.Round(rating, 1)
+        };
+    }
 
     public async Task<TmdbMovieDetailDto?> ObtenerDetalleTmdbAsync(int tmdbId)
     {
@@ -228,172 +152,7 @@ public class TaquillaService : ITaquillaService
 
             var json = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            var id = root.TryGetProperty("id", out var idProp) ? idProp.GetInt32() : tmdbId;
-            var titulo = root.TryGetProperty("title", out var titleProp) ? titleProp.GetString() ?? "" : "";
-            var original = root.TryGetProperty("original_title", out var origProp) ? origProp.GetString() ?? "" : "";
-            var tagline = root.TryGetProperty("tagline", out var tagProp) ? tagProp.GetString() : null;
-            var eslogan = !string.IsNullOrWhiteSpace(tagline) ? tagline : "Cine Tradicional en Jilotepec";
-
-            var overview = root.TryGetProperty("overview", out var overProp) ? overProp.GetString() : null;
-            var sinopsis = !string.IsNullOrWhiteSpace(overview)
-                ? overview
-                : "Disfruta de esta emocionante producción en nuestra pantalla gigante con audio cinematográfico inmersivo.";
-
-            var runtime = root.TryGetProperty("runtime", out var runProp) && runProp.ValueKind == JsonValueKind.Number ? runProp.GetInt32() : 120;
-            var poster = root.TryGetProperty("poster_path", out var posterProp) ? posterProp.GetString() ?? "" : "";
-            var backdrop = root.TryGetProperty("backdrop_path", out var backProp) ? backProp.GetString() ?? "" : "";
-            var release = root.TryGetProperty("release_date", out var relProp) ? relProp.GetString() ?? "" : "";
-            var voteAvg = root.TryGetProperty("vote_average", out var voteProp) && voteProp.ValueKind == JsonValueKind.Number ? voteProp.GetDouble() : 8.5;
-
-            var year = !string.IsNullOrEmpty(release) && release.Length >= 4 ? release.Substring(0, 4) : DateTime.Now.Year.ToString();
-
-            // Géneros (Principal y Lista Completa)
-            var generosList = new List<string>();
-            if (root.TryGetProperty("genres", out var genresProp) && genresProp.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var g in genresProp.EnumerateArray())
-                {
-                    if (g.TryGetProperty("name", out var gName))
-                    {
-                        var name = gName.GetString();
-                        if (!string.IsNullOrEmpty(name)) generosList.Add(name);
-                    }
-                }
-            }
-            var genero = generosList.Count > 0 ? generosList[0] : "Cine";
-            var generosCompletos = generosList.Count > 0 ? string.Join(", ", generosList) : "Acción, Aventuras";
-
-            // Créditos: Director y Actores (Top 3)
-            var director = "Director Cinematográfico";
-            var actoresList = new List<string>();
-            if (root.TryGetProperty("credits", out var creditsProp))
-            {
-                if (creditsProp.TryGetProperty("crew", out var crewProp) && crewProp.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var member in crewProp.EnumerateArray())
-                    {
-                        if (member.TryGetProperty("job", out var jobProp) && jobProp.GetString() == "Director")
-                        {
-                            director = member.TryGetProperty("name", out var dName) ? dName.GetString() ?? director : director;
-                            break;
-                        }
-                    }
-                }
-
-                if (creditsProp.TryGetProperty("cast", out var castProp) && castProp.ValueKind == JsonValueKind.Array)
-                {
-                    int count = 0;
-                    foreach (var actor in castProp.EnumerateArray())
-                    {
-                        if (count >= 3) break;
-                        if (actor.TryGetProperty("name", out var aName))
-                        {
-                            var name = aName.GetString();
-                            if (!string.IsNullOrEmpty(name))
-                            {
-                                actoresList.Add(name);
-                                count++;
-                            }
-                        }
-                    }
-                }
-            }
-            var actores = actoresList.Count > 0 ? string.Join(", ", actoresList) : "Elenco estelar";
-
-            // Certificación / Clasificación (Mapeo estricto: R -> C, PG-13 -> B15, PG -> B, G -> AA, NC-17 -> C)
-            var mapaCert = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                { "R", "C" },
-                { "PG-13", "B15" },
-                { "PG", "B" },
-                { "G", "AA" },
-                { "NC-17", "C" },
-                { "A", "A" },
-                { "AA", "AA" },
-                { "B", "B" },
-                { "B15", "B15" },
-                { "C", "C" }
-            };
-
-            var clasificacion = "B";
-            if (root.TryGetProperty("release_dates", out var rdProp) &&
-                rdProp.TryGetProperty("results", out var rdResults) &&
-                rdResults.ValueKind == JsonValueKind.Array)
-            {
-                JsonElement? mxRelease = null;
-                JsonElement? usRelease = null;
-
-                foreach (var country in rdResults.EnumerateArray())
-                {
-                    var iso = country.TryGetProperty("iso_3166_1", out var isoProp) ? isoProp.GetString() : "";
-                    if (iso == "MX" && mxRelease == null) mxRelease = country;
-                    if (iso == "US" && usRelease == null) usRelease = country;
-                }
-
-                var targetRelease = mxRelease ?? usRelease;
-                if (targetRelease.HasValue &&
-                    targetRelease.Value.TryGetProperty("release_dates", out var datesArr) &&
-                    datesArr.ValueKind == JsonValueKind.Array &&
-                    datesArr.GetArrayLength() > 0)
-                {
-                    foreach (var cd in datesArr.EnumerateArray())
-                    {
-                        var cert = cd.TryGetProperty("certification", out var certProp) ? certProp.GetString() : "";
-                        if (!string.IsNullOrWhiteSpace(cert))
-                        {
-                            if (mapaCert.TryGetValue(cert.Trim(), out var certMapeada))
-                            {
-                                clasificacion = certMapeada;
-                            }
-                            else
-                            {
-                                clasificacion = cert.Trim();
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Tráiler Key de YouTube
-            string? trailerKey = null;
-            if (root.TryGetProperty("videos", out var videosProp) &&
-                videosProp.TryGetProperty("results", out var vidResults) &&
-                vidResults.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var v in vidResults.EnumerateArray())
-                {
-                    var site = v.TryGetProperty("site", out var siteProp) ? siteProp.GetString() : "";
-                    var type = v.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : "";
-                    if (site == "YouTube" && (type == "Trailer" || trailerKey == null))
-                    {
-                        trailerKey = v.TryGetProperty("key", out var keyProp) ? keyProp.GetString() : null;
-                        if (type == "Trailer") break;
-                    }
-                }
-            }
-
-            return new TmdbMovieDetailDto
-            {
-                TmdbId = id,
-                Titulo = !string.IsNullOrWhiteSpace(titulo) ? titulo : original,
-                TituloOriginal = original,
-                Eslogan = eslogan,
-                Sinopsis = sinopsis,
-                Duracion = runtime > 0 ? runtime : 120,
-                Clasificacion = clasificacion,
-                Director = director,
-                Actores = actores,
-                Genero = genero,
-                GenerosCompletos = generosCompletos,
-                PosterPath = poster,
-                BackdropPath = backdrop,
-                ReleaseYear = year,
-                Rating = Math.Round(voteAvg, 1),
-                TrailerKey = trailerKey
-            };
+            return ConstruirDetalleTmdb(doc.RootElement, tmdbId);
         }
         catch
         {
@@ -401,154 +160,210 @@ public class TaquillaService : ITaquillaService
         }
     }
 
+    private static TmdbMovieDetailDto ConstruirDetalleTmdb(JsonElement root, int fallbackId)
+    {
+        var id = root.TryGetProperty("id", out var idProp) ? idProp.GetInt32() : fallbackId;
+        var titulo = GetJsonString(root, "title");
+        var original = GetJsonString(root, "original_title");
+        var tagline = GetJsonString(root, "tagline");
+        var eslogan = !string.IsNullOrWhiteSpace(tagline) ? tagline : "Cine Tradicional en Jilotepec";
+
+        var overview = GetJsonString(root, "overview");
+        var sinopsis = !string.IsNullOrWhiteSpace(overview)
+            ? overview
+            : "Disfruta de esta emocionante producción en nuestra pantalla gigante con audio cinematográfico inmersivo.";
+
+        var runtime = root.TryGetProperty("runtime", out var runProp) && runProp.ValueKind == JsonValueKind.Number ? runProp.GetInt32() : 120;
+        var poster = GetJsonString(root, "poster_path");
+        var backdrop = GetJsonString(root, "backdrop_path");
+        var release = GetJsonString(root, "release_date");
+        var voteAvg = root.TryGetProperty("vote_average", out var voteProp) && voteProp.ValueKind == JsonValueKind.Number ? voteProp.GetDouble() : 8.5;
+        var year = release.Length >= 4 ? release.Substring(0, 4) : DateTime.Now.Year.ToString(CultureInfo.InvariantCulture);
+
+        var (genero, generosCompletos) = ExtraerGeneros(root);
+        var (director, actores) = ExtraerCreditos(root);
+        var clasificacion = ExtraerClasificacion(root);
+        var trailerKey = ExtraerTrailerKey(root);
+
+        return new TmdbMovieDetailDto
+        {
+            TmdbId = id,
+            Titulo = !string.IsNullOrWhiteSpace(titulo) ? titulo : original,
+            TituloOriginal = original,
+            Eslogan = eslogan,
+            Sinopsis = sinopsis,
+            Duracion = runtime > 0 ? runtime : 120,
+            Clasificacion = clasificacion,
+            Director = director,
+            Actores = actores,
+            Genero = genero,
+            GenerosCompletos = generosCompletos,
+            PosterPath = poster,
+            BackdropPath = backdrop,
+            ReleaseYear = year,
+            Rating = Math.Round(voteAvg, 1),
+            TrailerKey = trailerKey
+        };
+    }
+
+    private static string GetJsonString(JsonElement element, string propertyName, string fallback = "")
+    {
+        if (element.TryGetProperty(propertyName, out var prop) && prop.ValueKind == JsonValueKind.String)
+        {
+            return prop.GetString() ?? fallback;
+        }
+        return fallback;
+    }
+
+    private static (string GeneroPrincipal, string GenerosCompletos) ExtraerGeneros(JsonElement root)
+    {
+        var generosList = new List<string>();
+        if (root.TryGetProperty("genres", out var genresProp) && genresProp.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var g in genresProp.EnumerateArray())
+            {
+                var name = GetJsonString(g, "name");
+                if (!string.IsNullOrEmpty(name)) generosList.Add(name);
+            }
+        }
+
+        var genero = generosList.Count > 0 ? generosList[0] : "Cine";
+        var generosCompletos = generosList.Count > 0 ? string.Join(", ", generosList) : "Acción, Aventuras";
+        return (genero, generosCompletos);
+    }
+
+    private static (string Director, string Actores) ExtraerCreditos(JsonElement root)
+    {
+        if (!root.TryGetProperty("credits", out var creditsProp))
+        {
+            return ("Director Cinematográfico", "Elenco estelar");
+        }
+
+        var director = ExtraerDirector(creditsProp);
+        var actores = ExtraerActores(creditsProp);
+        return (director, actores);
+    }
+
+    private static string ExtraerDirector(JsonElement creditsProp)
+    {
+        if (creditsProp.TryGetProperty("crew", out var crewProp) && crewProp.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var member in crewProp.EnumerateArray())
+            {
+                if (GetJsonString(member, "job") == "Director")
+                {
+                    var name = GetJsonString(member, "name");
+                    if (!string.IsNullOrEmpty(name)) return name;
+                }
+            }
+        }
+        return "Director Cinematográfico";
+    }
+
+    private static string ExtraerActores(JsonElement creditsProp)
+    {
+        var actoresList = new List<string>();
+        if (creditsProp.TryGetProperty("cast", out var castProp) && castProp.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var actor in castProp.EnumerateArray())
+            {
+                var name = GetJsonString(actor, "name");
+                if (!string.IsNullOrEmpty(name))
+                {
+                    actoresList.Add(name);
+                    if (actoresList.Count >= 3) break;
+                }
+            }
+        }
+        return actoresList.Count > 0 ? string.Join(", ", actoresList) : "Elenco estelar";
+    }
+
+    private static string ExtraerClasificacion(JsonElement root)
+    {
+        if (!root.TryGetProperty("release_dates", out var rdProp) ||
+            !rdProp.TryGetProperty("results", out var rdResults) ||
+            rdResults.ValueKind != JsonValueKind.Array)
+        {
+            return "B";
+        }
+
+        JsonElement? targetRelease = BuscarReleasePais(rdResults);
+        if (!targetRelease.HasValue ||
+            !targetRelease.Value.TryGetProperty("release_dates", out var datesArr) ||
+            datesArr.ValueKind != JsonValueKind.Array)
+        {
+            return "B";
+        }
+
+        return ExtraerCertificacionDesdeArreglo(datesArr);
+    }
+
+    private static JsonElement? BuscarReleasePais(JsonElement rdResults)
+    {
+        JsonElement? mxRelease = null;
+        JsonElement? usRelease = null;
+
+        foreach (var country in rdResults.EnumerateArray())
+        {
+            var iso = GetJsonString(country, "iso_3166_1");
+            if (iso == "MX" && mxRelease == null) mxRelease = country;
+            if (iso == "US" && usRelease == null) usRelease = country;
+        }
+
+        return mxRelease ?? usRelease;
+    }
+
+    private static string ExtraerCertificacionDesdeArreglo(JsonElement datesArr)
+    {
+        foreach (var cd in datesArr.EnumerateArray())
+        {
+            var cert = GetJsonString(cd, "certification").Trim();
+            if (!string.IsNullOrWhiteSpace(cert))
+            {
+                return MapaCertificaciones.TryGetValue(cert, out var certMapeada) ? certMapeada : cert;
+            }
+        }
+        return "B";
+    }
+
+    private static string? ExtraerTrailerKey(JsonElement root)
+    {
+        if (!root.TryGetProperty("videos", out var videosProp) ||
+            !videosProp.TryGetProperty("results", out var vidResults) ||
+            vidResults.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        string? trailerKey = null;
+        foreach (var v in vidResults.EnumerateArray())
+        {
+            var site = GetJsonString(v, "site");
+            var type = GetJsonString(v, "type");
+            if (site == "YouTube" && (type == "Trailer" || trailerKey == null))
+            {
+                var key = GetJsonString(v, "key");
+                trailerKey = !string.IsNullOrEmpty(key) ? key : null;
+                if (type == "Trailer") break;
+            }
+        }
+
+        return trailerKey;
+    }
+
     public async Task<PeliculaCarteleraDto> RegistrarPeliculaDesdeTmdbAsync(RegistrarPeliculaDto dto)
     {
-        // 1. Regla de persistencia: PROHIBIDO almacenar URLs absolutas en SQL Server.
-        // Solo ruta relativa (ej: "/mo7teil1qH0SxgLijnqeYP1Eb4w.jpg").
-        var posterRelativo = dto.PosterPath ?? string.Empty;
-        if (posterRelativo.Contains("/p/"))
-        {
-            posterRelativo = posterRelativo.Substring(posterRelativo.LastIndexOf('/'));
-        }
-        else if (posterRelativo.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var uri = new Uri(posterRelativo);
-                posterRelativo = uri.AbsolutePath;
-            }
-            catch
-            {
-                posterRelativo = string.Empty;
-            }
-        }
+        var posterRelativo = NormalizarPosterRelativo(dto.PosterPath);
+        var sinopsisNormalizada = NormalizarSinopsis(dto.Sinopsis);
+        var sala = await ObtenerOCrearSalaAsync(dto.IdSala);
+        var pelicula = await ObtenerOCrearPeliculaAsync(dto, sinopsisNormalizada, posterRelativo);
 
-        // 2. Normalización de sinopsis respetando VARCHAR(100) en BD
-        var sinopsisNormalizada = dto.Sinopsis?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(sinopsisNormalizada))
-        {
-            sinopsisNormalizada = "Sinopsis oficial en Cine Teatro Xilotzin.";
-        }
-        if (sinopsisNormalizada.Length > 100)
-        {
-            sinopsisNormalizada = sinopsisNormalizada.Substring(0, 97) + "...";
-        }
+        var (fechaInicio, fechaFin) = NormalizarRangoFechas(dto.FechaInicio, dto.FechaFin);
+        var listaHorarios = ObtenerListaHorarios(dto);
+        var precioFuncion = dto.Precio > 0 ? dto.Precio : 50.00m;
 
-        // 3. Validar existencia de sala o crear Sala por defecto
-        var sala = await _db.Salas.FirstOrDefaultAsync(s => dto.IdSala.HasValue && s.IdSala == dto.IdSala.Value)
-                   ?? await _db.Salas.FirstOrDefaultAsync();
-
-        if (sala == null)
-        {
-            sala = new Sala
-            {
-                NombreSala = "Sala 1 - Principal",
-                CapacidadTotal = 100,
-                TipoPantalla = "MacroXE"
-            };
-            _db.Salas.Add(sala);
-            await _db.SaveChangesAsync();
-        }
-
-        // 4. Buscar si la película ya existe para evitar duplicados en la base de datos
-        var tituloLimpio = dto.Titulo.Trim();
-        var pelicula = await _db.Peliculas
-            .FirstOrDefaultAsync(p => p.Titulo.ToLower() == tituloLimpio.ToLower());
-
-        if (pelicula == null)
-        {
-            pelicula = new Pelicula
-            {
-                Titulo = tituloLimpio,
-                Sinopsis = sinopsisNormalizada,
-                Duracion = dto.Duracion > 0 ? dto.Duracion : 120,
-                Clasificacion = string.IsNullOrWhiteSpace(dto.Clasificacion) ? "B" : dto.Clasificacion.Trim(),
-                Director = string.IsNullOrWhiteSpace(dto.Director) ? "Director Oficial" : dto.Director.Trim(),
-                PosterImage = posterRelativo
-            };
-            _db.Peliculas.Add(pelicula);
-            await _db.SaveChangesAsync();
-        }
-        else
-        {
-            // Si ya existía, actualizar poster y sinopsis si es necesario
-            if (!string.IsNullOrEmpty(posterRelativo))
-            {
-                pelicula.PosterImage = posterRelativo;
-            }
-            pelicula.Sinopsis = sinopsisNormalizada;
-            await _db.SaveChangesAsync();
-        }
-
-        // 5. Crear Funciones para el rango de fechas y horarios configurados
-        var fechaInicio = dto.FechaInicio?.Date ?? DateTime.Today;
-        var fechaFin = dto.FechaFin?.Date ?? fechaInicio;
-        if (fechaFin < fechaInicio)
-        {
-            fechaFin = fechaInicio;
-        }
-
-        // Limitar rango a maximo 60 dias por seguridad
-        if ((fechaFin - fechaInicio).TotalDays > 60)
-        {
-            fechaFin = fechaInicio.AddDays(60);
-        }
-
-        var listaHorarios = new List<string>();
-        if (dto.Horarios != null && dto.Horarios.Count > 0)
-        {
-            listaHorarios.AddRange(dto.Horarios.Where(h => !string.IsNullOrWhiteSpace(h)));
-        }
-        else if (!string.IsNullOrWhiteSpace(dto.Horario))
-        {
-            listaHorarios.Add(dto.Horario);
-        }
-
-        if (listaHorarios.Count == 0)
-        {
-            listaHorarios.Add("16:00");
-        }
-
-        var funcionesParaPelicula = new List<Funcion>();
-
-        for (var dia = fechaInicio; dia <= fechaFin; dia = dia.AddDays(1))
-        {
-            foreach (var hStr in listaHorarios)
-            {
-                if (!TimeSpan.TryParse(hStr, out var timeSpan))
-                {
-                    continue;
-                }
-
-                var horaInicio = dia.Add(timeSpan);
-
-                var funcionExistente = await _db.Funcions.FirstOrDefaultAsync(f =>
-                    f.IdPelicula == pelicula.IdPelicula &&
-                    f.IdSala == sala.IdSala &&
-                    f.FechaFuncion.Date == dia.Date &&
-                    f.HoraInicio == horaInicio);
-
-                if (funcionExistente == null)
-                {
-                    var nuevaFuncion = new Funcion
-                    {
-                        IdPelicula = pelicula.IdPelicula,
-                        IdSala = sala.IdSala,
-                        FechaFuncion = dia.Date,
-                        HoraInicio = horaInicio,
-                        Precio = dto.Precio > 0 ? dto.Precio : 50.00m
-                    };
-                    _db.Funcions.Add(nuevaFuncion);
-                    funcionesParaPelicula.Add(nuevaFuncion);
-                }
-                else
-                {
-                    funcionesParaPelicula.Add(funcionExistente);
-                }
-            }
-        }
-
-        await _db.SaveChangesAsync();
+        var funcionesParaPelicula = await ProgramarFuncionesEnRangoAsync(
+            pelicula.IdPelicula, sala.IdSala, precioFuncion, listaHorarios, fechaInicio, fechaFin);
 
         var fechaHoy = DateTime.Today;
         var funcionesRespuesta = funcionesParaPelicula
@@ -574,6 +389,160 @@ public class TaquillaService : ITaquillaService
             poster_image = pelicula.PosterImage ?? string.Empty,
             Funciones = funcionesRespuesta
         };
+    }
+
+    private static string NormalizarPosterRelativo(string? posterPath)
+    {
+        var posterRelativo = posterPath ?? string.Empty;
+        if (posterRelativo.Contains("/p/"))
+        {
+            return posterRelativo.Substring(posterRelativo.LastIndexOf('/'));
+        }
+
+        if (posterRelativo.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            return Uri.TryCreate(posterRelativo, UriKind.Absolute, out var uri)
+                ? uri.AbsolutePath
+                : string.Empty;
+        }
+
+        return posterRelativo;
+    }
+
+    private static string NormalizarSinopsis(string? sinopsis)
+    {
+        var sinopsisNormalizada = sinopsis?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(sinopsisNormalizada))
+        {
+            sinopsisNormalizada = "Sinopsis oficial en Cine Teatro Xilotzin.";
+        }
+        return sinopsisNormalizada.Length > 100
+            ? sinopsisNormalizada.Substring(0, 97) + "..."
+            : sinopsisNormalizada;
+    }
+
+    private async Task<Sala> ObtenerOCrearSalaAsync(int? idSala)
+    {
+        var sala = await _db.Salas.FirstOrDefaultAsync(s => idSala.HasValue && s.IdSala == idSala.Value)
+                   ?? await _db.Salas.FirstOrDefaultAsync();
+
+        if (sala != null) return sala;
+
+        sala = new Sala
+        {
+            NombreSala = "Sala 1 - Principal",
+            CapacidadTotal = 100,
+            TipoPantalla = "MacroXE"
+        };
+        _db.Salas.Add(sala);
+        await _db.SaveChangesAsync();
+        return sala;
+    }
+
+    private async Task<Pelicula> ObtenerOCrearPeliculaAsync(RegistrarPeliculaDto dto, string sinopsisNormalizada, string posterRelativo)
+    {
+        var tituloLimpio = dto.Titulo.Trim();
+        var pelicula = await _db.Peliculas
+            .FirstOrDefaultAsync(p => p.Titulo.ToLower() == tituloLimpio.ToLower());
+
+        if (pelicula == null)
+        {
+            pelicula = new Pelicula
+            {
+                Titulo = tituloLimpio,
+                Sinopsis = sinopsisNormalizada,
+                Duracion = dto.Duracion > 0 ? dto.Duracion : 120,
+                Clasificacion = string.IsNullOrWhiteSpace(dto.Clasificacion) ? "B" : dto.Clasificacion.Trim(),
+                Director = string.IsNullOrWhiteSpace(dto.Director) ? "Director Oficial" : dto.Director.Trim(),
+                PosterImage = posterRelativo
+            };
+            _db.Peliculas.Add(pelicula);
+        }
+        else
+        {
+            if (!string.IsNullOrEmpty(posterRelativo))
+            {
+                pelicula.PosterImage = posterRelativo;
+            }
+            pelicula.Sinopsis = sinopsisNormalizada;
+        }
+
+        await _db.SaveChangesAsync();
+        return pelicula;
+    }
+
+    private static (DateTime Inicio, DateTime Fin) NormalizarRangoFechas(DateTime? inicioDto, DateTime? finDto)
+    {
+        var fechaInicio = inicioDto?.Date ?? DateTime.Today;
+        var fechaFin = finDto?.Date ?? fechaInicio;
+        if (fechaFin < fechaInicio) fechaFin = fechaInicio;
+        if ((fechaFin - fechaInicio).TotalDays > 60) fechaFin = fechaInicio.AddDays(60);
+        return (fechaInicio, fechaFin);
+    }
+
+    private static List<string> ObtenerListaHorarios(RegistrarPeliculaDto dto)
+    {
+        var listaHorarios = new List<string>();
+        if (dto.Horarios != null && dto.Horarios.Count > 0)
+        {
+            listaHorarios.AddRange(dto.Horarios.Where(h => !string.IsNullOrWhiteSpace(h)));
+        }
+        else if (!string.IsNullOrWhiteSpace(dto.Horario))
+        {
+            listaHorarios.Add(dto.Horario);
+        }
+
+        if (listaHorarios.Count == 0)
+        {
+            listaHorarios.Add("16:00");
+        }
+        return listaHorarios;
+    }
+
+    private async Task<List<Funcion>> ProgramarFuncionesEnRangoAsync(
+        int idPelicula, int idSala, decimal precio, List<string> listaHorarios, DateTime fechaInicio, DateTime fechaFin)
+    {
+        var funcionesParaPelicula = new List<Funcion>();
+
+        for (var dia = fechaInicio; dia <= fechaFin; dia = dia.AddDays(1))
+        {
+            foreach (var hStr in listaHorarios)
+            {
+                if (!TimeSpan.TryParse(hStr, CultureInfo.InvariantCulture, out var timeSpan))
+                {
+                    continue;
+                }
+
+                var funcion = await ObtenerOCrearFuncionAsync(idPelicula, idSala, dia, dia.Add(timeSpan), precio);
+                funcionesParaPelicula.Add(funcion);
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return funcionesParaPelicula;
+    }
+
+    private async Task<Funcion> ObtenerOCrearFuncionAsync(
+        int idPelicula, int idSala, DateTime dia, DateTime horaInicio, decimal precio)
+    {
+        var funcionExistente = await _db.Funcions.FirstOrDefaultAsync(f =>
+            f.IdPelicula == idPelicula &&
+            f.IdSala == idSala &&
+            f.FechaFuncion.Date == dia.Date &&
+            f.HoraInicio == horaInicio);
+
+        if (funcionExistente != null) return funcionExistente;
+
+        var nuevaFuncion = new Funcion
+        {
+            IdPelicula = idPelicula,
+            IdSala = idSala,
+            FechaFuncion = dia.Date,
+            HoraInicio = horaInicio,
+            Precio = precio
+        };
+        _db.Funcions.Add(nuevaFuncion);
+        return nuevaFuncion;
     }
 
     public async Task<List<PeliculaCarteleraDto>> SincronizarCatalogoBaseAsync()
@@ -608,20 +577,7 @@ public class TaquillaService : ITaquillaService
 
         foreach (var item in catalogoLocal)
         {
-            TmdbMovieDetailDto? detalle = null;
-            try
-            {
-                var resultados = await BuscarTmdbAsync(item.Titulo);
-                if (resultados != null && resultados.Count > 0)
-                {
-                    detalle = await ObtenerDetalleTmdbAsync(resultados[0].TmdbId);
-                }
-            }
-            catch
-            {
-                // Ignorar error de red y usar fallback
-            }
-
+            var detalle = await BuscarDetallePeliculaCatalogoAsync(item.Titulo);
             var poster = detalle?.PosterPath ?? (fallbackPosters.TryGetValue(item.Titulo, out var fbPoster) ? fbPoster : "");
             var dto = new RegistrarPeliculaDto
             {
@@ -645,83 +601,56 @@ public class TaquillaService : ITaquillaService
         return carteleraSincronizada;
     }
 
-    public async Task<bool> EliminarPeliculaAsync(int idPelicula)
-
+    private async Task<TmdbMovieDetailDto?> BuscarDetallePeliculaCatalogoAsync(string titulo)
     {
+        var resultados = await BuscarTmdbAsync(titulo);
+        if (resultados.Count > 0)
+        {
+            return await ObtenerDetalleTmdbAsync(resultados[0].TmdbId);
+        }
+        return null;
+    }
 
+    public async Task<bool> EliminarPeliculaAsync(int idPelicula)
+    {
         var pelicula = await _db.Peliculas
-
             .Include(p => p.Funcions)
-
             .FirstOrDefaultAsync(p => p.IdPelicula == idPelicula);
-
-
 
         if (pelicula == null) return false;
 
-
-
         var idsFunciones = pelicula.Funcions.Select(f => f.IdFuncion).ToList();
-
         if (idsFunciones.Count > 0)
-
         {
-
             var estados = await _db.EstadoButacaFuncions
-
                 .Where(e => idsFunciones.Contains(e.IdFuncion))
-
                 .ToListAsync();
-
             _db.EstadoButacaFuncions.RemoveRange(estados);
 
-
-
             var preordenes = await _db.Preordens
-
                 .Where(pr => idsFunciones.Contains(pr.IdFuncion))
-
                 .ToListAsync();
 
-
-
             if (preordenes.Count > 0)
-
             {
-
                 var idsPreorden = preordenes.Select(pr => pr.IdPreorden).ToList();
-
                 var detalles = await _db.DetallePreordenBoletos
-
                     .Where(d => idsPreorden.Contains(d.IdPreorden))
-
                     .ToListAsync();
-
                 _db.DetallePreordenBoletos.RemoveRange(detalles);
 
-
-
                 _db.Preordens.RemoveRange(preordenes);
-
             }
 
-
-
             _db.Funcions.RemoveRange(pelicula.Funcions);
-
         }
 
-
-
         _db.Peliculas.Remove(pelicula);
-
         await _db.SaveChangesAsync();
-
         return true;
-
     }
 
-    public async Task<List<PromocionDto>> ObtenerPromocionesAsync()
+    public Task<List<PromocionDto>> ObtenerPromocionesAsync()
     {
         var promociones = new List<PromocionDto>
         {
@@ -757,7 +686,7 @@ public class TaquillaService : ITaquillaService
             }
         };
 
-        return await Task.FromResult(promociones);
+        return Task.FromResult(promociones);
     }
 
     public async Task<FuncionButacasDto> ObtenerButacasFuncionAsync(int idFuncion)
@@ -810,20 +739,6 @@ public class TaquillaService : ITaquillaService
             .Where(p => p.IdCategoriaNavigation.Nombre != "Taquilla")
             .ToListAsync();
 
-        var imagenes = new Dictionary<string, string>
-        {
-            { "7501001", "https://images.unsplash.com/photo-1585647347384-2593bc35786b?q=80&w=400&auto=format&fit=crop" },
-            { "7501002", "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?q=80&w=400&auto=format&fit=crop" },
-            { "7501003", "https://images.unsplash.com/photo-1513456852971-30c0b8199d4d?q=80&w=400&auto=format&fit=crop" },
-            { "7501004", "https://images.unsplash.com/photo-1566478989037-e924e50cb792?q=80&w=400&auto=format&fit=crop" },
-            { "7501005", "https://images.pexels.com/photos/29269189/pexels-photo-29269189.jpeg?auto=compress&cs=tinysrgb&dpr=1&w=400" },
-            { "7501006", "https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=400&auto=format&fit=crop" },
-            { "7501007", "https://images.unsplash.com/photo-1604382354936-07c5d9983bd3?q=80&w=400&auto=format&fit=crop" },
-            { "COMBO01", "https://images.unsplash.com/photo-1585647347384-2593bc35786b?q=80&w=400" },
-            { "COMBO02", "https://images.unsplash.com/photo-1513456852971-30c0b8199d4d?q=80&w=400" },
-            { "COMBO03", "https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=400" }
-        };
-
         return productos.Select(p => new ProductoDto
         {
             IdProducto = p.IdProducto,
@@ -832,7 +747,9 @@ public class TaquillaService : ITaquillaService
             Categoria = p.IdCategoriaNavigation?.Nombre ?? "Snacks",
             Precio = p.PrecioVenta,
             Stock = p.StockActual,
-            Img = imagenes.TryGetValue(p.CodigoBarras, out var imgUrl) ? imgUrl : "https://images.unsplash.com/photo-1585647347384-2593bc35786b?q=80&w=400"
+            Img = ImagenesDulceria.TryGetValue(p.CodigoBarras, out var imgUrl)
+                ? imgUrl
+                : "https://images.unsplash.com/photo-1585647347384-2593bc35786b?q=80&w=400"
         }).ToList();
     }
 
@@ -844,13 +761,14 @@ public class TaquillaService : ITaquillaService
         }
 
         var totalCalculado = dto.Items.Sum(i => i.Precio * i.Cantidad);
+        var metodoNormalizado = string.IsNullOrWhiteSpace(dto.MetodoPago) ? "Efectivo" : dto.MetodoPago;
 
         var venta = new Ventum
         {
             IdVendedor = dto.IdVendedor > 0 ? dto.IdVendedor : 1,
             FechaVenta = DateTime.Now,
             Total = totalCalculado,
-            MetodoPago = string.IsNullOrWhiteSpace(dto.MetodoPago) ? "Efectivo" : dto.MetodoPago
+            MetodoPago = metodoNormalizado
         };
 
         _db.Venta.Add(venta);
@@ -860,75 +778,7 @@ public class TaquillaService : ITaquillaService
 
         foreach (var item in dto.Items)
         {
-            if (item.Tipo == "dulceria" || item.IdProducto.HasValue)
-            {
-                var producto = item.IdProducto.HasValue
-                    ? await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == item.IdProducto.Value)
-                    : await _db.Productos.FirstOrDefaultAsync(p => p.CodigoBarras == item.Sku || p.Nombre == item.Nombre);
-
-                if (producto != null)
-                {
-                    var detalle = new DetalleVentum
-                    {
-                        IdVenta = venta.IdVenta,
-                        IdProducto = producto.IdProducto,
-                        Cantidad = item.Cantidad
-                    };
-                    _db.DetalleVenta.Add(detalle);
-
-                    producto.StockActual = Math.Max(0, producto.StockActual - item.Cantidad);
-                }
-            }
-            else if (item.Tipo == "boleto")
-            {
-                if (productoBoleto != null)
-                {
-                    var detalle = new DetalleVentum
-                    {
-                        IdVenta = venta.IdVenta,
-                        IdProducto = productoBoleto.IdProducto,
-                        Cantidad = item.Cantidad
-                    };
-                    _db.DetalleVenta.Add(detalle);
-                }
-
-                if (item.IdFuncion.HasValue && item.Asientos != null && item.Asientos.Count > 0)
-                {
-                    var funcionId = item.IdFuncion.Value;
-                    var funcion = await _db.Funcions.FirstOrDefaultAsync(f => f.IdFuncion == funcionId);
-                    var idSala = funcion?.IdSala ?? 1;
-
-                    foreach (var asientoCodigo in item.Asientos)
-                    {
-                        if (string.IsNullOrWhiteSpace(asientoCodigo) || asientoCodigo.Length < 2) continue;
-                        var fila = asientoCodigo.Substring(0, 1);
-                        if (!int.TryParse(asientoCodigo.Substring(1), out var numero)) continue;
-
-                        var butaca = await _db.Butacas
-                            .FirstOrDefaultAsync(b => b.IdSala == idSala && b.Fila == fila && b.Numero == numero);
-
-                        if (butaca != null)
-                        {
-                            var estado = await _db.EstadoButacaFuncions
-                                .FirstOrDefaultAsync(e => e.IdFuncion == funcionId && e.IdButaca == butaca.IdButaca);
-
-                            if (estado != null)
-                            {
-                                estado.Estato = true;
-                            }
-                            else
-                            {
-                                _db.EstadoButacaFuncions.Add(new EstadoButacaFuncion
-                                {
-                                    IdFuncion = funcionId,
-                                    IdButaca = butaca.IdButaca,
-                                    Estato = true
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+            await ProcesarItemVentaAsync(venta.IdVenta, item, productoBoleto);
         }
 
         await _db.SaveChangesAsync();
@@ -938,10 +788,99 @@ public class TaquillaService : ITaquillaService
             IdVenta = venta.IdVenta,
             Folio = $"VT-{venta.IdVenta:D5}",
             Total = venta.Total,
-            MetodoPago = venta.MetodoPago ?? "Efectivo",
+            MetodoPago = metodoNormalizado,
             FechaVenta = venta.FechaVenta,
             Items = dto.Items
         };
+    }
+
+    private async Task ProcesarItemVentaAsync(int idVenta, RegistrarVentaItemDto item, Producto? productoBoleto)
+    {
+        if (item.Tipo == "dulceria" || item.IdProducto.HasValue)
+        {
+            await ProcesarItemDulceriaAsync(idVenta, item);
+        }
+        else if (item.Tipo == "boleto")
+        {
+            await ProcesarItemBoletoAsync(idVenta, item, productoBoleto);
+        }
+    }
+
+    private async Task ProcesarItemDulceriaAsync(int idVenta, RegistrarVentaItemDto item)
+    {
+        var producto = item.IdProducto.HasValue
+            ? await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == item.IdProducto.Value)
+            : await _db.Productos.FirstOrDefaultAsync(p => p.CodigoBarras == item.Sku || p.Nombre == item.Nombre);
+
+        if (producto == null) return;
+
+        _db.DetalleVenta.Add(new DetalleVentum
+        {
+            IdVenta = idVenta,
+            IdProducto = producto.IdProducto,
+            Cantidad = item.Cantidad
+        });
+
+        producto.StockActual = Math.Max(0, producto.StockActual - item.Cantidad);
+    }
+
+    private async Task ProcesarItemBoletoAsync(int idVenta, RegistrarVentaItemDto item, Producto? productoBoleto)
+    {
+        if (productoBoleto != null)
+        {
+            _db.DetalleVenta.Add(new DetalleVentum
+            {
+                IdVenta = idVenta,
+                IdProducto = productoBoleto.IdProducto,
+                Cantidad = item.Cantidad
+            });
+        }
+
+        if (item.IdFuncion.HasValue && item.Asientos != null && item.Asientos.Count > 0)
+        {
+            await OcuparAsientosFuncionAsync(item.IdFuncion.Value, item.Asientos);
+        }
+    }
+
+    private async Task OcuparAsientosFuncionAsync(int funcionId, List<string> asientos)
+    {
+        var funcion = await _db.Funcions.FirstOrDefaultAsync(f => f.IdFuncion == funcionId);
+        var idSala = funcion?.IdSala ?? 1;
+
+        foreach (var asientoCodigo in asientos)
+        {
+            await OcuparButacaIndividualAsync(funcionId, idSala, asientoCodigo);
+        }
+    }
+
+    private async Task OcuparButacaIndividualAsync(int funcionId, int idSala, string asientoCodigo)
+    {
+        if (string.IsNullOrWhiteSpace(asientoCodigo) || asientoCodigo.Length < 2) return;
+
+        var fila = asientoCodigo.Substring(0, 1);
+        if (!int.TryParse(asientoCodigo.Substring(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out var numero)) return;
+
+        var butaca = await _db.Butacas
+            .FirstOrDefaultAsync(b => b.IdSala == idSala && b.Fila == fila && b.Numero == numero);
+
+        if (butaca == null) return;
+
+        var estado = await _db.EstadoButacaFuncions
+            .FirstOrDefaultAsync(e => e.IdFuncion == funcionId && e.IdButaca == butaca.IdButaca);
+
+        if (estado != null)
+        {
+            estado.Estato = true;
+        }
+        else
+        {
+            _db.EstadoButacaFuncions.Add(new EstadoButacaFuncion
+            {
+                IdFuncion = funcionId,
+                IdButaca = butaca.IdButaca,
+                Estato = true
+            });
+        }
     }
 
     public async Task<PreordenDto?> ObtenerPreordenAsync(string codigoQr)
@@ -950,20 +889,25 @@ public class TaquillaService : ITaquillaService
 
         var pre = await _db.Preordens
             .Include(p => p.IdClienteNavigation)
-            .Include(p => p.IdFuncionNavigation)
-                .ThenInclude(f => f.IdPeliculaNavigation)
-            .Include(p => p.DetallePreordenBoletos)
-            .Include(p => p.DetallePreordenDulceria)
-                .ThenInclude(d => d.IdProductoNavigation)
+            .Include(p => p.IdFuncionNavigation.IdPeliculaNavigation)
             .FirstOrDefaultAsync(p => p.CodigoQr == codigoQr);
 
         if (pre == null) return null;
 
-        var boletosCantidad = pre.DetallePreordenBoletos.Sum(b => b.Caantidad);
+        var boletos = await _db.DetallePreordenBoletos
+            .Where(b => b.IdPreorden == pre.IdPreorden)
+            .ToListAsync();
+
+        var dulceria = await _db.DetallePreordenDulceria
+            .Include(d => d.IdProductoNavigation)
+            .Where(d => d.IdPreorden == pre.IdPreorden)
+            .ToListAsync();
+
+        var boletosCantidad = boletos.Sum(b => b.Caantidad);
         var precioBoleto = pre.IdFuncionNavigation?.Precio ?? 50m;
         var subtotalBoletos = boletosCantidad * precioBoleto;
 
-        var combos = pre.DetallePreordenDulceria.Select(d => new PreordenComboDto
+        var combos = dulceria.Select(d => new PreordenComboDto
         {
             Nombre = d.IdProductoNavigation?.Nombre ?? "Combo",
             Cantidad = d.Cantidad,
@@ -979,17 +923,16 @@ public class TaquillaService : ITaquillaService
             Cliente = pre.IdClienteNavigation?.Nombre ?? "Cliente Xilotzin",
             Telefono = pre.IdClienteNavigation?.NumeroTelefono ?? "",
             Pelicula = pre.IdFuncionNavigation?.IdPeliculaNavigation?.Titulo ?? "Película",
-            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString("HH:mm") ?? "16:00",
+            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "16:00",
             IdFuncion = pre.IdFuncion,
             BoletosGeneral = boletosCantidad,
             PrecioBoleto = precioBoleto,
             Asientos = new List<string> { "C4", "C5" },
             Combos = combos,
             Total = subtotalBoletos + subtotalCombos,
-            FechaCreacion = pre.FechaCreacion.ToString("yyyy-MM-dd"),
+            FechaCreacion = pre.FechaCreacion.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             VigenciaDias = pre.Vigencia,
             EstadoActivo = pre.EstadoActivo
         };
     }
-
 }

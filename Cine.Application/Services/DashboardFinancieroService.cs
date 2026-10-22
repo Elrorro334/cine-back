@@ -1,13 +1,19 @@
+using System.Globalization;
 using System.Text;
 using Cine.Application.Dtos;
 using Cine.Application.Helpers;
 using Cine.Application.Interfaces;
+using Cine.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace Cine.Application.Services;
 
 public class DashboardFinancieroService : IDashboardFinancieroService
 {
+    private const string MetodoEfectivo = "Efectivo";
+    private const string MetodoTarjeta = "Tarjeta";
+    private const string MetodoOtros = "Otros";
+
     private readonly ICineDbContext _db;
 
     public DashboardFinancieroService(ICineDbContext db)
@@ -23,92 +29,21 @@ public class DashboardFinancieroService : IDashboardFinancieroService
         var ventas = await _db.Venta
             .Include(v => v.IdVendedorNavigation)
             .Include(v => v.DetalleVenta)
-                .ThenInclude(d => d.IdProductoNavigation)
-                    .ThenInclude(p => p.IdCategoriaNavigation)
+                .ThenInclude(d => d.IdProductoNavigation.IdCategoriaNavigation)
             .Where(v => v.FechaVenta >= inicio && v.FechaVenta <= fin)
             .OrderByDescending(v => v.FechaVenta)
             .ToListAsync();
 
-        // 2. Consultar preórdenes del periodo (para complementar venta de boletos online si aplica)
+        // 2. Consultar preórdenes del periodo
         var preordenes = await _db.Preordens
             .Include(p => p.DetallePreordenBoletos)
-            .Include(p => p.DetallePreordenDulceria)
-                .ThenInclude(d => d.IdProductoNavigation)
             .Where(p => p.FechaCreacion >= inicio && p.FechaCreacion <= fin && p.EstadoActivo)
             .ToListAsync();
 
         // 3. Calcular totales y métricas de KPIs
         decimal totalIngresosVentas = ventas.Sum(v => v.Total);
-
-        decimal totalTaquilla = 0m;
-        int boletosVendidos = 0;
-        decimal totalDulceria = 0m;
-        int productosDulceriaVendidos = 0;
-
-        var listaTransacciones = new List<TransaccionDetalleDto>();
-
-        foreach (var venta in ventas)
-        {
-            int boletosEnVenta = 0;
-            decimal subtotalBoletosEnVenta = 0m;
-            int dulceriaEnVenta = 0;
-            decimal subtotalDulceriaEnVenta = 0m;
-
-            var resumenItems = new List<string>();
-
-            if (venta.DetalleVenta != null && venta.DetalleVenta.Count > 0)
-            {
-                foreach (var detalle in venta.DetalleVenta)
-                {
-                    var prod = detalle.IdProductoNavigation;
-                    var catNombre = prod?.IdCategoriaNavigation?.Nombre ?? string.Empty;
-                    var prodNombre = prod?.Nombre ?? "Artículo";
-                    decimal precio = prod?.PrecioVenta ?? 0m;
-                    decimal subtotal = precio * detalle.Cantidad;
-
-                    if (EsBoleto(catNombre, prodNombre))
-                    {
-                        boletosEnVenta += detalle.Cantidad;
-                        subtotalBoletosEnVenta += subtotal;
-                    }
-                    else
-                    {
-                        dulceriaEnVenta += detalle.Cantidad;
-                        subtotalDulceriaEnVenta += subtotal;
-                    }
-
-                    resumenItems.Add($"{detalle.Cantidad}x {prodNombre}");
-                }
-            }
-
-            // Si la venta no tenía productos desglosados en detalle_venta, clasificar por el total
-            if (boletosEnVenta == 0 && dulceriaEnVenta == 0)
-            {
-                subtotalBoletosEnVenta = venta.Total;
-                boletosEnVenta = venta.Total > 0 ? 1 : 0;
-                resumenItems.Add("Venta Directa de Taquilla");
-            }
-
-            totalTaquilla += subtotalBoletosEnVenta;
-            boletosVendidos += boletosEnVenta;
-            totalDulceria += subtotalDulceriaEnVenta;
-            productosDulceriaVendidos += dulceriaEnVenta;
-
-            // Determinar Tipo de Transacción
-            string tipoTransaccion = DeterminarTipoTransaccion(boletosEnVenta, dulceriaEnVenta);
-
-            listaTransacciones.Add(new TransaccionDetalleDto
-            {
-                IdVenta = venta.IdVenta,
-                FechaHora = venta.FechaVenta,
-                Cajero = venta.IdVendedorNavigation?.Nombre ?? "Cajero General",
-                TipoTransaccion = tipoTransaccion,
-                MetodoPago = NormalizarMetodoPago(venta.MetodoPago),
-                Total = venta.Total,
-                CantidadArticulos = boletosEnVenta + dulceriaEnVenta,
-                ResumenDetalle = string.Join(", ", resumenItems)
-            });
-        }
+        var (totalTaquilla, boletosVendidos, totalDulceria, productosDulceriaVendidos, listaTransacciones) =
+            ProcesarColeccionVentas(ventas);
 
         // Incorporar boletos de preórdenes si no estuvieran registrados en Venta
         if (preordenes.Count > 0 && ventas.Count == 0)
@@ -173,30 +108,26 @@ public class DashboardFinancieroService : IDashboardFinancieroService
         var dashboard = await ObtenerDashboardAsync(filtro);
 
         var sb = new StringBuilder();
-
-        // Encabezados del CSV estructurado
         sb.AppendLine("Folio,Fecha,Hora,Cajero,Tipo Transaccion,Metodo Pago,Total,Cantidad Articulos,Detalle de Productos");
 
         foreach (var t in dashboard.Transacciones)
         {
-            string fecha = t.FechaHora.ToString("dd/MM/yyyy");
-            string hora = t.FechaHora.ToString("HH:mm:ss");
+            string fecha = t.FechaHora.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+            string hora = t.FechaHora.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
             string cajeroEscapado = EscaparCsv(t.Cajero);
             string tipoEscapado = EscaparCsv(t.TipoTransaccion);
             string metodoEscapado = EscaparCsv(t.MetodoPago);
-            string total = t.Total.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+            string total = t.Total.ToString("F2", CultureInfo.InvariantCulture);
             string detalleEscapado = EscaparCsv(t.ResumenDetalle);
 
             sb.AppendLine($"{t.IdVenta},{fecha},{hora},{cajeroEscapado},{tipoEscapado},{metodoEscapado},{total},{t.CantidadArticulos},{detalleEscapado}");
         }
 
-        // Agregar fila resumen al final
         sb.AppendLine();
-        sb.AppendLine($"RESUMEN DE INGRESOS,,,,,,{dashboard.Kpis.TotalIngresos.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},{dashboard.Kpis.BoletosVendidos + dashboard.Kpis.ProductosDulceriaVendidos},Total Transacciones: {dashboard.Kpis.TotalTransacciones}");
-        sb.AppendLine($"TOTAL TAQUILLA,,,,,,{dashboard.Kpis.TotalTaquilla.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},{dashboard.Kpis.BoletosVendidos},Boletos Vendidos");
-        sb.AppendLine($"TOTAL DULCERIA,,,,,,{dashboard.Kpis.TotalDulceria.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},{dashboard.Kpis.ProductosDulceriaVendidos},Articulos Dulceria");
+        sb.AppendLine($"RESUMEN DE INGRESOS,,,,,,{dashboard.Kpis.TotalIngresos.ToString("F2", CultureInfo.InvariantCulture)},{dashboard.Kpis.BoletosVendidos + dashboard.Kpis.ProductosDulceriaVendidos},Total Transacciones: {dashboard.Kpis.TotalTransacciones}");
+        sb.AppendLine($"TOTAL TAQUILLA,,,,,,{dashboard.Kpis.TotalTaquilla.ToString("F2", CultureInfo.InvariantCulture)},{dashboard.Kpis.BoletosVendidos},Boletos Vendidos");
+        sb.AppendLine($"TOTAL DULCERIA,,,,,,{dashboard.Kpis.TotalDulceria.ToString("F2", CultureInfo.InvariantCulture)},{dashboard.Kpis.ProductosDulceriaVendidos},Articulos Dulceria");
 
-        // Retornar en codificación UTF-8 con BOM para visualización perfecta e instantánea en Microsoft Excel
         var preamble = Encoding.UTF8.GetPreamble();
         var contentBytes = Encoding.UTF8.GetBytes(sb.ToString());
 
@@ -205,6 +136,86 @@ public class DashboardFinancieroService : IDashboardFinancieroService
         Buffer.BlockCopy(contentBytes, 0, resultBytes, preamble.Length, contentBytes.Length);
 
         return resultBytes;
+    }
+
+    private static (decimal TotalTaquilla, int BoletosVendidos, decimal TotalDulceria, int ProductosDulceriaVendidos, List<TransaccionDetalleDto> Transacciones)
+        ProcesarColeccionVentas(List<Ventum> ventas)
+    {
+        decimal totalTaquilla = 0m;
+        int boletosVendidos = 0;
+        decimal totalDulceria = 0m;
+        int productosDulceriaVendidos = 0;
+        var listaTransacciones = new List<TransaccionDetalleDto>();
+
+        foreach (var venta in ventas)
+        {
+            var (boletosEnVenta, subtotalBoletos, dulceriaEnVenta, subtotalDulceria, transaccion) =
+                ProcesarVentaIndividual(venta);
+
+            totalTaquilla += subtotalBoletos;
+            boletosVendidos += boletosEnVenta;
+            totalDulceria += subtotalDulceria;
+            productosDulceriaVendidos += dulceriaEnVenta;
+            listaTransacciones.Add(transaccion);
+        }
+
+        return (totalTaquilla, boletosVendidos, totalDulceria, productosDulceriaVendidos, listaTransacciones);
+    }
+
+    private static (int Boletos, decimal SubtotalBoletos, int Dulceria, decimal SubtotalDulceria, TransaccionDetalleDto Transaccion)
+        ProcesarVentaIndividual(Ventum venta)
+    {
+        int boletosEnVenta = 0;
+        decimal subtotalBoletosEnVenta = 0m;
+        int dulceriaEnVenta = 0;
+        decimal subtotalDulceriaEnVenta = 0m;
+        var resumenItems = new List<string>();
+
+        if (venta.DetalleVenta != null)
+        {
+            foreach (var detalle in venta.DetalleVenta)
+            {
+                var prod = detalle.IdProductoNavigation;
+                var catNombre = prod?.IdCategoriaNavigation?.Nombre ?? string.Empty;
+                var prodNombre = prod?.Nombre ?? "Artículo";
+                decimal precio = prod?.PrecioVenta ?? 0m;
+                decimal subtotal = precio * detalle.Cantidad;
+
+                if (EsBoleto(catNombre, prodNombre))
+                {
+                    boletosEnVenta += detalle.Cantidad;
+                    subtotalBoletosEnVenta += subtotal;
+                }
+                else
+                {
+                    dulceriaEnVenta += detalle.Cantidad;
+                    subtotalDulceriaEnVenta += subtotal;
+                }
+
+                resumenItems.Add($"{detalle.Cantidad}x {prodNombre}");
+            }
+        }
+
+        if (boletosEnVenta == 0 && dulceriaEnVenta == 0)
+        {
+            subtotalBoletosEnVenta = venta.Total;
+            boletosEnVenta = venta.Total > 0 ? 1 : 0;
+            resumenItems.Add("Venta Directa de Taquilla");
+        }
+
+        var transaccion = new TransaccionDetalleDto
+        {
+            IdVenta = venta.IdVenta,
+            FechaHora = venta.FechaVenta,
+            Cajero = venta.IdVendedorNavigation?.Nombre ?? "Cajero General",
+            TipoTransaccion = DeterminarTipoTransaccion(boletosEnVenta, dulceriaEnVenta),
+            MetodoPago = NormalizarMetodoPago(venta.MetodoPago),
+            Total = venta.Total,
+            CantidadArticulos = boletosEnVenta + dulceriaEnVenta,
+            ResumenDetalle = string.Join(", ", resumenItems)
+        };
+
+        return (boletosEnVenta, subtotalBoletosEnVenta, dulceriaEnVenta, subtotalDulceriaEnVenta, transaccion);
     }
 
     private static (DateTime Inicio, DateTime Fin, string Descripcion) ResolverRangoFechas(FiltroDashboardDto filtro)
@@ -237,27 +248,27 @@ public class DashboardFinancieroService : IDashboardFinancieroService
 
     private static string NormalizarMetodoPago(string? metodo)
     {
-        if (string.IsNullOrWhiteSpace(metodo)) return "Efectivo";
+        if (string.IsNullOrWhiteSpace(metodo)) return MetodoEfectivo;
 
         if (metodo.Contains("tarjeta", StringComparison.OrdinalIgnoreCase) ||
             metodo.Contains("card", StringComparison.OrdinalIgnoreCase) ||
             metodo.Contains("debito", StringComparison.OrdinalIgnoreCase) ||
             metodo.Contains("credito", StringComparison.OrdinalIgnoreCase))
         {
-            return "Tarjeta";
+            return MetodoTarjeta;
         }
 
         if (metodo.Contains("efectivo", StringComparison.OrdinalIgnoreCase) ||
             metodo.Contains("cash", StringComparison.OrdinalIgnoreCase))
         {
-            return "Efectivo";
+            return MetodoEfectivo;
         }
 
         return metodo.Trim();
     }
 
     private static (MetodoPagoDesgloseDto Efectivo, MetodoPagoDesgloseDto Tarjeta, MetodoPagoDesgloseDto Otros) CalcularDesgloseMetodosPago(
-        List<Domain.Entities.Ventum> ventas, decimal totalIngresos)
+        List<Ventum> ventas, decimal totalIngresos)
     {
         decimal totalEfectivo = 0m;
         int countEfectivo = 0;
@@ -271,12 +282,12 @@ public class DashboardFinancieroService : IDashboardFinancieroService
         foreach (var v in ventas)
         {
             string norm = NormalizarMetodoPago(v.MetodoPago);
-            if (norm == "Efectivo")
+            if (norm == MetodoEfectivo)
             {
                 totalEfectivo += v.Total;
                 countEfectivo++;
             }
-            else if (norm == "Tarjeta")
+            else if (norm == MetodoTarjeta)
             {
                 totalTarjeta += v.Total;
                 countTarjeta++;
@@ -295,21 +306,21 @@ public class DashboardFinancieroService : IDashboardFinancieroService
         return (
             new MetodoPagoDesgloseDto
             {
-                Metodo = "Efectivo",
+                Metodo = MetodoEfectivo,
                 Total = totalEfectivo,
                 Porcentaje = pctEfectivo,
                 CantidadTransacciones = countEfectivo
             },
             new MetodoPagoDesgloseDto
             {
-                Metodo = "Tarjeta",
+                Metodo = MetodoTarjeta,
                 Total = totalTarjeta,
                 Porcentaje = pctTarjeta,
                 CantidadTransacciones = countTarjeta
             },
             new MetodoPagoDesgloseDto
             {
-                Metodo = "Otros",
+                Metodo = MetodoOtros,
                 Total = totalOtros,
                 Porcentaje = pctOtros,
                 CantidadTransacciones = countOtros
