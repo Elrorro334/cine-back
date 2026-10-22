@@ -81,7 +81,9 @@ Para ejecutar el análisis estático de código y reporte de cobertura de forma 
      /d:sonar.token="TU_SONAR_TOKEN" \
      /d:sonar.host.url="https://sonarcloud.io" \
      /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
-     /d:sonar.coverage.exclusions="**/Program.cs,**/Controllers/TestController.cs,**/Migrations/**"
+     /d:sonar.coverage.exclusions="**/Program.cs,**/Controllers/TestController.cs,**/Migrations/**" \
+     /d:sonar.cpd.exclusions="**/Migrations/**" \
+     /d:sonar.exclusions="**/Migrations/**"
    ```
 
 3. **Compilar la solución:**
