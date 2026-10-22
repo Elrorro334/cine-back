@@ -10,5 +10,8 @@ public class RegistrarPeliculaDto
     public string PosterPath { get; set; } = string.Empty; // Ruta relativa estricta ej: "/qmDpIHrmpJINaRKAfWQfftjCdyi.jpg"
     public decimal Precio { get; set; } = 50.00m;
     public string? Horario { get; set; } = "16:00";
+    public List<string>? Horarios { get; set; }
+    public DateTime? FechaInicio { get; set; }
+    public DateTime? FechaFin { get; set; }
     public int? IdSala { get; set; } = 1;
 }
