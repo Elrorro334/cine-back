@@ -49,15 +49,41 @@ Para verificar el historial de migraciones aplicadas en SQL Server:
 SELECT * FROM __EFMigrationsHistory;
 ```
 
-### 4. Rollback (Deshacer Migraciones)
-Entity Framework permite regresar a cualquier migración previa especificando su nombre:
-```bash
-# Revertir cambios hasta la migración M2 (deshace M3)
-dotnet ef database update M2_AgregarColumnaCliente
+### 4. Rollback (Deshacer Migraciones) y Reaplicación del Cambio
+Entity Framework Core permite regresar a cualquier migración previa especificando su nombre, y posteriormente reaplicar las migraciones pendientes:
 
-# Regresar la base de datos al estado completamente actualizado
-dotnet ef database update
+```bash
+# 1. Rollback: Revertir cambios hasta la migración M2 (deshace M3)
+dotnet ef database update M2_AgregarColumnaCliente --project Cine.Infrastructure --startup-project .
+
+# 2. Reaplicación del cambio: Detecta que M3 está pendiente en el historial de código y la vuelve a ejecutar
+dotnet ef database update --project Cine.Infrastructure --startup-project .
 ```
+
+### 5. Ejecución de Todas las Migraciones desde una Base de Datos Limpia (Desde Cero)
+Cuando se despliega el proyecto en un entorno nuevo o se requiere reconstruir la base de datos `cineDataBase` completamente limpia desde cero aplicando secuencialmente `M1_CreacionInicial` $\rightarrow$ `M2_AgregarColumnaCliente` $\rightarrow$ `M3_AgregarIndiceCorreo`:
+
+1. **(Opcional) Eliminar la base de datos existente para dejar el entorno limpio:**
+   ```bash
+   dotnet ef database drop --force --project Cine.Infrastructure --startup-project .
+   ```
+2. **Crear la base de datos desde cero y aplicar todas las migraciones en orden (`M1` -> `M2` -> `M3`):**
+   ```bash
+   dotnet ef database update --project Cine.Infrastructure --startup-project .
+   ```
+   > **¿Qué hace internamente EF Core en una base limpia?**
+   > 1. Verifica que la base de datos `cineDataBase` no existe en la instancia de SQL Server y ejecuta `CREATE DATABASE [cineDataBase]`.
+   > 2. Crea la tabla de auditoría `[__EFMigrationsHistory]`.
+   > 3. Ejecuta en orden cronológico cada migración registrada en `Cine.Infrastructure/Migrations`:
+   >    - `20261022172515_M1_CreacionInicial` (creación de tablas base, llaves primarias y foráneas).
+   >    - `20261022172629_M2_AgregarColumnaCliente` (modificación estructural).
+   >    - `20261022172730_M3_AgregarIndiceCorreo` (aplicación de índice y restricción).
+   > 4. Registra los tres identificadores en `[__EFMigrationsHistory]` dejando el esquema en su versión más reciente.
+
+3. **Verificar que las 3 migraciones quedaron aplicadas en SQL Server:**
+   ```bash
+   sqlcmd -S localhost -d cineDataBase -E -Q "SELECT MigrationId, ProductVersion FROM __EFMigrationsHistory;"
+   ```
 
 ---
 
