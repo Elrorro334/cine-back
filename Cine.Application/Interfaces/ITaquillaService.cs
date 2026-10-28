@@ -16,5 +16,6 @@ namespace Cine.Application.Interfaces
         Task<VentaConfirmadaDto> RegistrarVentaAsync(RegistrarVentaDto dto);
         Task<PreordenDto?> ObtenerPreordenAsync(string codigoQr);
         Task<PreordenDto> CrearPreordenAsync(CrearPreordenDto dto);
+        Task<PeliculaTrailerDto?> ObtenerTrailerPeliculaAsync(int idPelicula);
     }
 }

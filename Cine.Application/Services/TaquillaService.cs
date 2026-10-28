@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using Cine.Application.Dtos;
@@ -1072,5 +1073,129 @@ public class TaquillaService : ITaquillaService
             VigenciaDias = preorden.Vigencia,
             EstadoActivo = preorden.EstadoActivo
         };
+    }
+
+    private static readonly ConcurrentDictionary<int, PeliculaTrailerDto> _trailersCache = new();
+
+    private static readonly Dictionary<int, (string Key, string Nombre)> FallbackTrailers = new()
+    {
+        { 1, ("QXibcL7-XbU", "Spider-Man: Un Nuevo Día (Tráiler Final)") },
+        { 2, ("I8aZahPFQnA", "Super Mario Bros. La Película (Tráiler Final)") },
+        { 14, ("R4GEdGRQVBU", "Caminos del Crimen (Tráiler Oficial)") },
+        { 15, ("cxTQ3aMYgfU", "Terrifier 3: Payaso Siniestro (Tráiler Final)") },
+        { 16, ("az6bdokjRk8", "La Posesión de la Momia (Tráiler Oficial)") },
+        { 17, ("M4ESyy4q9Qo", "Avatar: Fuego y Ceniza (Tráiler Oficial)") },
+        { 18, ("YiWXTkpP9j0", "Five Nights at Freddy's 2 (Tráiler Oficial)") },
+        { 19, ("ipzEY7c7it8", "Super Mario Galaxy (Tráiler Final)") },
+        { 20, ("lAr_uspgHm8", "Avengers: Doomsday (Tráiler Oficial)") },
+        { 21, ("9n7b0ORr-U4", "El Conjuro 4: Últimos Ritos (Tráiler Oficial)") }
+    };
+
+    public async Task<PeliculaTrailerDto?> ObtenerTrailerPeliculaAsync(int idPelicula)
+    {
+        if (_trailersCache.TryGetValue(idPelicula, out var cached))
+        {
+            return cached;
+        }
+
+        var pelicula = await _db.Peliculas.FindAsync(idPelicula);
+        if (pelicula == null) return null;
+
+        var dto = new PeliculaTrailerDto
+        {
+            IdPelicula = pelicula.IdPelicula,
+            Titulo = pelicula.Titulo
+        };
+
+        try
+        {
+            var cleanTitle = pelicula.Titulo.Split(':')[0].Replace(".", "").Trim();
+            var searchUrl = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&query={Uri.EscapeDataString(cleanTitle)}&language=es-MX";
+            var searchResponse = await _httpClient.GetAsync(searchUrl);
+
+            int? tmdbId = null;
+            if (searchResponse.IsSuccessStatusCode)
+            {
+                var searchJson = await searchResponse.Content.ReadAsStringAsync();
+                using var searchDoc = JsonDocument.Parse(searchJson);
+                if (searchDoc.RootElement.TryGetProperty("results", out var results) && results.GetArrayLength() > 0)
+                {
+                    tmdbId = results[0].GetProperty("id").GetInt32();
+                }
+            }
+
+            if (tmdbId.HasValue)
+            {
+                var videosUrl = $"https://api.themoviedb.org/3/movie/{tmdbId.Value}/videos?api_key={_tmdbApiKey}&language=es-MX";
+                var videosResponse = await _httpClient.GetAsync(videosUrl);
+                var videosJson = videosResponse.IsSuccessStatusCode ? await videosResponse.Content.ReadAsStringAsync() : "{}";
+                using var videosDoc = JsonDocument.Parse(videosJson);
+
+                var items = new List<TrailerItemDto>();
+                if (videosDoc.RootElement.TryGetProperty("results", out var vidArray) && vidArray.GetArrayLength() > 0)
+                {
+                    foreach (var v in vidArray.EnumerateArray())
+                    {
+                        var site = GetJsonString(v, "site");
+                        var key = GetJsonString(v, "key");
+                        var name = GetJsonString(v, "name");
+                        var type = GetJsonString(v, "type");
+                        if (site == "YouTube" && !string.IsNullOrWhiteSpace(key))
+                        {
+                            items.Add(new TrailerItemDto { Key = key, Nombre = name, Tipo = type });
+                        }
+                    }
+                }
+
+                if (items.Count == 0)
+                {
+                    var origVideosUrl = $"https://api.themoviedb.org/3/movie/{tmdbId.Value}/videos?api_key={_tmdbApiKey}";
+                    var origResponse = await _httpClient.GetAsync(origVideosUrl);
+                    if (origResponse.IsSuccessStatusCode)
+                    {
+                        var origJson = await origResponse.Content.ReadAsStringAsync();
+                        using var origDoc = JsonDocument.Parse(origJson);
+                        if (origDoc.RootElement.TryGetProperty("results", out var origArray))
+                        {
+                            foreach (var v in origArray.EnumerateArray())
+                            {
+                                var site = GetJsonString(v, "site");
+                                var key = GetJsonString(v, "key");
+                                var name = GetJsonString(v, "name");
+                                var type = GetJsonString(v, "type");
+                                if (site == "YouTube" && !string.IsNullOrWhiteSpace(key))
+                                {
+                                    items.Add(new TrailerItemDto { Key = key, Nombre = name, Tipo = type });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                dto.Trailers = items;
+                dto.TrailerKey = items.FirstOrDefault(i => i.Tipo == "Trailer")?.Key ?? items.FirstOrDefault()?.Key;
+            }
+        }
+        catch
+        {
+            // Silencioso ante fallos de red hacia TMDB
+        }
+
+        if (string.IsNullOrEmpty(dto.TrailerKey) && FallbackTrailers.TryGetValue(idPelicula, out var fb))
+        {
+            dto.TrailerKey = fb.Key;
+            if (dto.Trailers.Count == 0)
+            {
+                dto.Trailers.Add(new TrailerItemDto
+                {
+                    Key = fb.Key,
+                    Nombre = fb.Nombre,
+                    Tipo = "Trailer"
+                });
+            }
+        }
+
+        _trailersCache[idPelicula] = dto;
+        return dto;
     }
 }

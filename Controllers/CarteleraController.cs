@@ -27,6 +27,18 @@ public class CarteleraController : ControllerBase
 
     // Endpoint público: promociones y avisos dinámicos
     [AllowAnonymous]
+    [HttpGet("trailer/{idPelicula:int}")]
+    public async Task<IActionResult> ObtenerTrailerPelicula(int idPelicula)
+    {
+        var trailer = await _taquillaService.ObtenerTrailerPeliculaAsync(idPelicula);
+        if (trailer == null)
+        {
+            return NotFound("No se encontró el tráiler para esta película.");
+        }
+        return Ok(trailer);
+    }
+
+    [AllowAnonymous]
     [HttpGet("promociones")]
     public async Task<IActionResult> GetPromociones()
     {
