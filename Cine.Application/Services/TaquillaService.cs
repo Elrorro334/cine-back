@@ -1091,9 +1091,25 @@ public class TaquillaService : ITaquillaService
         { 21, ("9n7b0ORr-U4", "El Conjuro 4: Últimos Ritos (Tráiler Oficial)") }
     };
 
+    private async Task<bool> EsVideoValidoEnYouTubeAsync(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+        try
+        {
+            var checkUrl = $"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={key}&format=json";
+            using var req = new HttpRequestMessage(HttpMethod.Get, checkUrl);
+            using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+            return resp.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public async Task<PeliculaTrailerDto?> ObtenerTrailerPeliculaAsync(int idPelicula)
     {
-        if (_trailersCache.TryGetValue(idPelicula, out var cached))
+        if (_trailersCache.TryGetValue(idPelicula, out var cached) && !string.IsNullOrEmpty(cached.TrailerKey))
         {
             return cached;
         }
@@ -1109,11 +1125,12 @@ public class TaquillaService : ITaquillaService
 
         try
         {
-            var cleanTitle = pelicula.Titulo.Split(':')[0].Replace(".", "").Trim();
-            var searchUrl = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&query={Uri.EscapeDataString(cleanTitle)}&language=es-MX";
+            int? tmdbId = null;
+
+            // 1. Buscar en TMDB con el título completo
+            var searchUrl = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&query={Uri.EscapeDataString(pelicula.Titulo.Trim())}&language=es-MX";
             var searchResponse = await _httpClient.GetAsync(searchUrl);
 
-            int? tmdbId = null;
             if (searchResponse.IsSuccessStatusCode)
             {
                 var searchJson = await searchResponse.Content.ReadAsStringAsync();
@@ -1124,9 +1141,27 @@ public class TaquillaService : ITaquillaService
                 }
             }
 
+            // 2. Si no se encontró y tiene subtítulo (ej: Spider-Man: Un nuevo día), buscar por título base
+            if (!tmdbId.HasValue && pelicula.Titulo.Contains(':'))
+            {
+                var cleanTitle = pelicula.Titulo.Split(':')[0].Trim();
+                var fallbackSearchUrl = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&query={Uri.EscapeDataString(cleanTitle)}&language=es-MX";
+                var fbResponse = await _httpClient.GetAsync(fallbackSearchUrl);
+                if (fbResponse.IsSuccessStatusCode)
+                {
+                    var fbJson = await fbResponse.Content.ReadAsStringAsync();
+                    using var fbDoc = JsonDocument.Parse(fbJson);
+                    if (fbDoc.RootElement.TryGetProperty("results", out var fbResults) && fbResults.GetArrayLength() > 0)
+                    {
+                        tmdbId = fbResults[0].GetProperty("id").GetInt32();
+                    }
+                }
+            }
+
+            // 3. Obtener videos oficiales de TMDB incluyendo español e inglés
             if (tmdbId.HasValue)
             {
-                var videosUrl = $"https://api.themoviedb.org/3/movie/{tmdbId.Value}/videos?api_key={_tmdbApiKey}&language=es-MX";
+                var videosUrl = $"https://api.themoviedb.org/3/movie/{tmdbId.Value}/videos?api_key={_tmdbApiKey}&include_video_language=es,es-MX,es-ES,en,null";
                 var videosResponse = await _httpClient.GetAsync(videosUrl);
                 var videosJson = videosResponse.IsSuccessStatusCode ? await videosResponse.Content.ReadAsStringAsync() : "{}";
                 using var videosDoc = JsonDocument.Parse(videosJson);
@@ -1147,33 +1182,39 @@ public class TaquillaService : ITaquillaService
                     }
                 }
 
-                if (items.Count == 0)
+                dto.Trailers = items;
+
+                // Priorizar tráilers: primero Trailers con nombre en español o doblado, luego cualquier Trailer, luego Teaser
+                var candidateTrailers = items
+                    .OrderBy(i => i.Tipo == "Trailer" ? 0 : (i.Tipo == "Teaser" ? 1 : 2))
+                    .ThenBy(i => i.Nombre.Contains("Español", StringComparison.OrdinalIgnoreCase) ||
+                                 i.Nombre.Contains("Doblado", StringComparison.OrdinalIgnoreCase) ||
+                                 i.Nombre.Contains("Tráiler", StringComparison.OrdinalIgnoreCase) ||
+                                 i.Nombre.Contains("Trailer", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                    .ToList();
+
+                // Validar contra YouTube para garantizar que el video no haya sido borrado ni esté privado
+                foreach (var candidate in candidateTrailers)
                 {
-                    var origVideosUrl = $"https://api.themoviedb.org/3/movie/{tmdbId.Value}/videos?api_key={_tmdbApiKey}";
-                    var origResponse = await _httpClient.GetAsync(origVideosUrl);
-                    if (origResponse.IsSuccessStatusCode)
+                    if (await EsVideoValidoEnYouTubeAsync(candidate.Key))
                     {
-                        var origJson = await origResponse.Content.ReadAsStringAsync();
-                        using var origDoc = JsonDocument.Parse(origJson);
-                        if (origDoc.RootElement.TryGetProperty("results", out var origArray))
-                        {
-                            foreach (var v in origArray.EnumerateArray())
-                            {
-                                var site = GetJsonString(v, "site");
-                                var key = GetJsonString(v, "key");
-                                var name = GetJsonString(v, "name");
-                                var type = GetJsonString(v, "type");
-                                if (site == "YouTube" && !string.IsNullOrWhiteSpace(key))
-                                {
-                                    items.Add(new TrailerItemDto { Key = key, Nombre = name, Tipo = type });
-                                }
-                            }
-                        }
+                        dto.TrailerKey = candidate.Key;
+                        break;
                     }
                 }
 
-                dto.Trailers = items;
-                dto.TrailerKey = items.FirstOrDefault(i => i.Tipo == "Trailer")?.Key ?? items.FirstOrDefault()?.Key;
+                // Si ninguno de los tráilers pasó la verificación, probar los demás videos
+                if (string.IsNullOrEmpty(dto.TrailerKey))
+                {
+                    foreach (var candidate in items)
+                    {
+                        if (await EsVideoValidoEnYouTubeAsync(candidate.Key))
+                        {
+                            dto.TrailerKey = candidate.Key;
+                            break;
+                        }
+                    }
+                }
             }
         }
         catch
@@ -1195,7 +1236,11 @@ public class TaquillaService : ITaquillaService
             }
         }
 
-        _trailersCache[idPelicula] = dto;
+        if (!string.IsNullOrEmpty(dto.TrailerKey))
+        {
+            _trailersCache[idPelicula] = dto;
+        }
+
         return dto;
     }
 }
