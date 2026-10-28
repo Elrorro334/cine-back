@@ -584,6 +584,175 @@ public class TaquillaServiceTests
         validRes.Total.Should().Be(210m);
     }
 
+    [Fact]
+    public async Task CrearPreordenAsync_WithValidData_CreatesAndReturnsPreorden()
+    {
+        var context = GetInMemoryDbContext();
+        var sala = new Sala { IdSala = 1, NombreSala = "Sala 1", CapacidadTotal = 100, TipoPantalla = "2D" };
+        var pelicula = new Pelicula { IdPelicula = 301, Titulo = "La posesion de la momia", Director = "Director Test", Sinopsis = "Sinopsis Test" };
+        var funcion = new Funcion
+        {
+            IdFuncion = 302,
+            IdPelicula = 301,
+            IdSala = 1,
+            FechaFuncion = DateTime.Today,
+            IdSalaNavigation = sala,
+            IdPeliculaNavigation = pelicula,
+            HoraInicio = DateTime.Today.AddHours(14).AddMinutes(30),
+            Precio = 50m
+        };
+        context.Salas.Add(sala);
+        var combo = new Producto
+        {
+            IdProducto = 303,
+            CodigoBarras = "COMBO01",
+            Nombre = "Combo Pareja",
+            PrecioVenta = 110m
+        };
+
+        context.Peliculas.Add(pelicula);
+        context.Funcions.Add(funcion);
+        context.Productos.Add(combo);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = 302,
+            Boletos = 2,
+            NombreCliente = "Alberto Cruz",
+            TelefonoCliente = "5512345678",
+            Combos = new List<CrearPreordenItemDulceriaDto>
+            {
+                new CrearPreordenItemDulceriaDto { IdProducto = 303, Cantidad = 1 }
+            }
+        };
+
+        var result = await service.CrearPreordenAsync(dto);
+
+        result.Should().NotBeNull();
+        result.Codigo.Should().StartWith("PRE-XIL-");
+        result.Cliente.Should().Be("Alberto Cruz");
+        result.Telefono.Should().Be("5512345678");
+        result.Pelicula.Should().Be("La posesion de la momia");
+        result.BoletosGeneral.Should().Be(2);
+        result.PrecioBoleto.Should().Be(50m);
+        result.Combos.Should().HaveCount(1);
+        result.Total.Should().Be(210m); // 2*50 + 110 = 210
+        result.VigenciaDias.Should().Be(12);
+        result.EstadoActivo.Should().BeTrue();
+
+        var dbPreorden = await context.Preordens.FirstOrDefaultAsync(p => p.CodigoQr == result.Codigo);
+        dbPreorden.Should().NotBeNull();
+        dbPreorden!.Vigencia.Should().Be(12);
+    }
+
+    [Fact]
+    public async Task CrearPreordenAsync_WithExistingClient_ReusesClientAndUpdatesName()
+    {
+        var context = GetInMemoryDbContext();
+        var sala2 = new Sala { IdSala = 1, NombreSala = "Sala 1", CapacidadTotal = 100, TipoPantalla = "2D" };
+        var pelicula = new Pelicula { IdPelicula = 310, Titulo = "Spiderman", Director = "Director Test", Sinopsis = "Sinopsis Test" };
+        var funcion = new Funcion
+        {
+            IdFuncion = 311,
+            IdPelicula = 310,
+            IdSala = 1,
+            FechaFuncion = DateTime.Today,
+            IdSalaNavigation = sala2,
+            IdPeliculaNavigation = pelicula,
+            HoraInicio = DateTime.Today.AddHours(16),
+            Precio = 60m
+        };
+        context.Salas.Add(sala2);
+        var clienteExistente = new Cliente
+        {
+            IdCliente = 400,
+            Nombre = "Antiguo Nombre",
+            NumeroTelefono = "5599887766",
+            Correo = "5599887766@xilotzin.local"
+        };
+
+        context.Peliculas.Add(pelicula);
+        context.Funcions.Add(funcion);
+        context.Clientes.Add(clienteExistente);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = 311,
+            Boletos = 3,
+            NombreCliente = "Nuevo Nombre",
+            TelefonoCliente = "5599887766"
+        };
+
+        var result = await service.CrearPreordenAsync(dto);
+
+        result.Should().NotBeNull();
+        result.Cliente.Should().Be("Nuevo Nombre");
+        result.Total.Should().Be(180m); // 3*60 = 180
+
+        var clientesCount = await context.Clientes.CountAsync(c => c.NumeroTelefono == "5599887766");
+        clientesCount.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(0, 2, "Juan", "5512345678")] // IdFuncion inválido
+    [InlineData(1, 0, "Juan", "5512345678")] // Boletos < 1
+    [InlineData(1, 11, "Juan", "5512345678")] // Boletos > 10
+    [InlineData(1, 2, "", "5512345678")] // Nombre vacío
+    [InlineData(1, 2, "Ab", "5512345678")] // Nombre muy corto
+    [InlineData(1, 2, "Juan", "1234567890")] // Teléfono que no empieza con 55
+    [InlineData(1, 2, "Juan", "551234567")] // Teléfono de 9 dígitos
+    [InlineData(1, 2, "Juan", "55123456789")] // Teléfono de 11 dígitos
+    [InlineData(1, 2, "Juan", "551234567A")] // Caracter no numérico
+    public async Task CrearPreordenAsync_WithInvalidInputs_ThrowsArgumentException(
+        int idFuncion, int boletos, string nombre, string telefono)
+    {
+        var context = GetInMemoryDbContext();
+        var service = new TaquillaService(context);
+
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = idFuncion,
+            Boletos = boletos,
+            NombreCliente = nombre,
+            TelefonoCliente = telefono
+        };
+
+        Func<Task> act = async () => await service.CrearPreordenAsync(dto);
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task CrearPreordenAsync_WhenDtoNull_ThrowsArgumentException()
+    {
+        var context = GetInMemoryDbContext();
+        var service = new TaquillaService(context);
+
+        Func<Task> act = async () => await service.CrearPreordenAsync(null!);
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task CrearPreordenAsync_WhenFuncionNotFound_ThrowsArgumentException()
+    {
+        var context = GetInMemoryDbContext();
+        var service = new TaquillaService(context);
+
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = 9999,
+            Boletos = 2,
+            NombreCliente = "Cliente Prueba",
+            TelefonoCliente = "5511223344"
+        };
+
+        Func<Task> act = async () => await service.CrearPreordenAsync(dto);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*No se encontró la función*");
+    }
+
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler;

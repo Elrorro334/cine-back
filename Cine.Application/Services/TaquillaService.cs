@@ -935,4 +935,142 @@ public class TaquillaService : ITaquillaService
             EstadoActivo = pre.EstadoActivo
         };
     }
+
+    public async Task<PreordenDto> CrearPreordenAsync(CrearPreordenDto dto)
+    {
+        if (dto == null)
+        {
+            throw new ArgumentException("Los datos de la pre-orden son obligatorios.");
+        }
+
+        if (dto.IdFuncion <= 0)
+        {
+            throw new ArgumentException("Debes seleccionar una función válida.");
+        }
+
+        if (dto.Boletos < 1 || dto.Boletos > 10)
+        {
+            throw new ArgumentException("La cantidad de boletos debe ser entre 1 y 10.");
+        }
+
+        var nombreLimpio = dto.NombreCliente?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(nombreLimpio) || nombreLimpio.Length < 3)
+        {
+            throw new ArgumentException("El nombre del cliente debe tener al menos 3 caracteres.");
+        }
+
+        var telefonoLimpio = dto.TelefonoCliente?.Trim().Replace(" ", "").Replace("-", "") ?? string.Empty;
+        if (telefonoLimpio.Length != 10 || !telefonoLimpio.StartsWith("55") || !telefonoLimpio.All(char.IsDigit))
+        {
+            throw new ArgumentException("El teléfono debe contener exactamente 10 dígitos e iniciar con 55 (ej. 5512345678).");
+        }
+
+        var funcion = await _db.Funcions
+            .Include(f => f.IdPeliculaNavigation)
+            .Include(f => f.IdSalaNavigation)
+            .FirstOrDefaultAsync(f => f.IdFuncion == dto.IdFuncion);
+
+        if (funcion == null)
+        {
+            throw new ArgumentException($"No se encontró la función con ID {dto.IdFuncion}.");
+        }
+
+        var cliente = await _db.Clientes
+            .FirstOrDefaultAsync(c => c.NumeroTelefono == telefonoLimpio);
+
+        if (cliente == null)
+        {
+            cliente = new Cliente
+            {
+                Nombre = nombreLimpio,
+                NumeroTelefono = telefonoLimpio,
+                Correo = $"{telefonoLimpio}@xilotzin.local"
+            };
+            _db.Clientes.Add(cliente);
+            await _db.SaveChangesAsync();
+        }
+        else if (cliente.Nombre != nombreLimpio)
+        {
+            cliente.Nombre = nombreLimpio;
+            await _db.SaveChangesAsync();
+        }
+
+        string folio;
+        var random = new Random();
+        do
+        {
+            folio = $"PRE-XIL-{random.Next(10000, 99999)}";
+        } while (await _db.Preordens.AnyAsync(p => p.CodigoQr == folio));
+
+        var preorden = new Preorden
+        {
+            CodigoQr = folio,
+            IdFuncion = funcion.IdFuncion,
+            IdCliente = cliente.IdCliente,
+            FechaCreacion = DateTime.Now,
+            Vigencia = 12,
+            EstadoActivo = true
+        };
+        _db.Preordens.Add(preorden);
+        await _db.SaveChangesAsync();
+
+        var precioBoleto = funcion.Precio > 0 ? funcion.Precio : 50m;
+        var subtotalBoletos = dto.Boletos * precioBoleto;
+        var detalleBoleto = new DetallePreordenBoleto
+        {
+            IdPreorden = preorden.IdPreorden,
+            Caantidad = dto.Boletos,
+            Subtotal = subtotalBoletos
+        };
+        _db.DetallePreordenBoletos.Add(detalleBoleto);
+
+        var combosList = new List<PreordenComboDto>();
+        decimal subtotalCombos = 0m;
+
+        if (dto.Combos != null && dto.Combos.Count > 0)
+        {
+            foreach (var comboDto in dto.Combos.Where(c => c.IdProducto > 0 && c.Cantidad > 0))
+            {
+                var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == comboDto.IdProducto);
+                if (producto != null)
+                {
+                    var detalleDulce = new DetallePreordenDulcerium
+                    {
+                        IdPreorden = preorden.IdPreorden,
+                        IdProducto = producto.IdProducto,
+                        Cantidad = comboDto.Cantidad
+                    };
+                    _db.DetallePreordenDulceria.Add(detalleDulce);
+                    subtotalCombos += producto.PrecioVenta * comboDto.Cantidad;
+                    combosList.Add(new PreordenComboDto
+                    {
+                        Nombre = producto.Nombre,
+                        Cantidad = comboDto.Cantidad,
+                        Precio = producto.PrecioVenta
+                    });
+                }
+            }
+        }
+
+        await _db.SaveChangesAsync();
+
+        return new PreordenDto
+        {
+            IdPreorden = preorden.IdPreorden,
+            Codigo = folio,
+            Cliente = cliente.Nombre,
+            Telefono = cliente.NumeroTelefono ?? telefonoLimpio,
+            Pelicula = funcion.IdPeliculaNavigation?.Titulo ?? "Película",
+            Horario = funcion.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
+            IdFuncion = funcion.IdFuncion,
+            BoletosGeneral = dto.Boletos,
+            PrecioBoleto = precioBoleto,
+            Asientos = new List<string>(),
+            Combos = combosList,
+            Total = subtotalBoletos + subtotalCombos,
+            FechaCreacion = preorden.FechaCreacion.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            VigenciaDias = preorden.Vigencia,
+            EstadoActivo = preorden.EstadoActivo
+        };
+    }
 }

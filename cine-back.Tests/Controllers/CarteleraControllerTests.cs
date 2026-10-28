@@ -223,4 +223,66 @@ public class CarteleraControllerTests
         notFoundResult.Should().NotBeNull();
         notFoundResult!.StatusCode.Should().Be(404);
     }
+
+    [Fact]
+    public async Task CrearPreorden_WhenValid_ReturnsCreated()
+    {
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = 1,
+            Boletos = 2,
+            NombreCliente = "Carlos Méndez",
+            TelefonoCliente = "5512345678"
+        };
+
+        var mockPreorden = new PreordenDto
+        {
+            IdPreorden = 10,
+            Codigo = "PRE-XIL-12345",
+            Cliente = "Carlos Méndez",
+            Telefono = "5512345678",
+            Pelicula = "Batman",
+            Horario = "16:00",
+            BoletosGeneral = 2,
+            PrecioBoleto = 50m,
+            Total = 100m,
+            FechaCreacion = "2026-10-27",
+            VigenciaDias = 12,
+            EstadoActivo = true
+        };
+
+        _taquillaServiceMock.Setup(s => s.CrearPreordenAsync(dto))
+            .ReturnsAsync(mockPreorden);
+
+        var result = await _controller.CrearPreorden(dto);
+
+        var createdResult = result as CreatedResult;
+        createdResult.Should().NotBeNull();
+        createdResult!.StatusCode.Should().Be(201);
+        createdResult.Location.Should().Be("/api/cartelera/preorden/PRE-XIL-12345");
+        var val = createdResult.Value as PreordenDto;
+        val.Should().NotBeNull();
+        val!.Codigo.Should().Be("PRE-XIL-12345");
+    }
+
+    [Fact]
+    public async Task CrearPreorden_WhenArgumentException_ReturnsBadRequest()
+    {
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = 0,
+            Boletos = 0,
+            NombreCliente = "",
+            TelefonoCliente = ""
+        };
+
+        _taquillaServiceMock.Setup(s => s.CrearPreordenAsync(dto))
+            .ThrowsAsync(new ArgumentException("Debes seleccionar una función válida."));
+
+        var result = await _controller.CrearPreorden(dto);
+
+        var badRequestResult = result as BadRequestObjectResult;
+        badRequestResult.Should().NotBeNull();
+        badRequestResult!.StatusCode.Should().Be(400);
+    }
 }

@@ -97,4 +97,20 @@ public class CarteleraController : ControllerBase
 
         return Ok(new { success = true, message = "Película retirada de cartelera exitosamente." });
     }
+
+    // Endpoint público: generar pre-orden digital QR
+    [AllowAnonymous]
+    [HttpPost("preorden")]
+    public async Task<IActionResult> CrearPreorden([FromBody] CrearPreordenDto dto)
+    {
+        try
+        {
+            var preorden = await _taquillaService.CrearPreordenAsync(dto);
+            return Created($"/api/cartelera/preorden/{preorden.Codigo}", preorden);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
 }
