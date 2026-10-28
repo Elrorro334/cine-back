@@ -753,6 +753,185 @@ public class TaquillaServiceTests
         await act.Should().ThrowAsync<ArgumentException>().WithMessage("*No se encontró la función*");
     }
 
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WhenMovieNotFound_ReturnsNull()
+    {
+        using var context = GetInMemoryDbContext();
+        var service = new TaquillaService(context);
+
+        var result = await service.ObtenerTrailerPeliculaAsync(9999);
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WhenFoundAndTmdbReturnsVideos_SelectsValidYouTubeVideo()
+    {
+        using var context = GetInMemoryDbContext();
+        var pelicula = new Pelicula
+        {
+            IdPelicula = 500,
+            Titulo = "Dragon 3",
+            Sinopsis = "Sinopsis de dragon",
+            Duracion = 100,
+            Director = "Dean DeBlois",
+            Clasificacion = "A"
+        };
+        context.Peliculas.Add(pelicula);
+        await context.SaveChangesAsync();
+
+        var searchJson = "{\"results\":[{\"id\":166428,\"title\":\"Dragon 3\"}]}";
+        var videosJson = "{\"results\":[{\"site\":\"YouTube\",\"type\":\"Trailer\",\"key\":\"invalidKey\",\"name\":\"Deleted Trailer\"},{\"site\":\"YouTube\",\"type\":\"Trailer\",\"key\":\"kN3lE7rpggQ\",\"name\":\"Trailer Oficial Español\"}]}";
+
+        var fakeHandler = new FakeHttpMessageHandler((req) =>
+        {
+            var uri = req.RequestUri?.ToString() ?? "";
+            if (uri.Contains("api.themoviedb.org/3/search/movie"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(searchJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (uri.Contains("api.themoviedb.org/3/movie/166428/videos"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(videosJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (uri.Contains("youtube.com/oembed"))
+            {
+                if (uri.Contains("invalidKey"))
+                {
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+                }
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var service = new TaquillaService(context, new HttpClient(fakeHandler));
+        var result = await service.ObtenerTrailerPeliculaAsync(500);
+
+        result.Should().NotBeNull();
+        result!.IdPelicula.Should().Be(500);
+        result.TrailerKey.Should().Be("kN3lE7rpggQ");
+        result.Trailers.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WithSubtitleColon_FallsBackToBaseTitle()
+    {
+        using var context = GetInMemoryDbContext();
+        var pelicula = new Pelicula
+        {
+            IdPelicula = 501,
+            Titulo = "Super Mario: El Comienzo",
+            Sinopsis = "Sinopsis de mario",
+            Duracion = 90,
+            Director = "Nintendo",
+            Clasificacion = "AA"
+        };
+        context.Peliculas.Add(pelicula);
+        await context.SaveChangesAsync();
+
+        var emptyResultsJson = "{\"results\":[]}";
+        var foundResultsJson = "{\"results\":[{\"id\":999,\"title\":\"Super Mario\"}]}";
+        var videosJson = "{\"results\":[{\"site\":\"YouTube\",\"type\":\"Trailer\",\"key\":\"marioKey\",\"name\":\"Tráiler Oficial\"}]}";
+
+        var fakeHandler = new FakeHttpMessageHandler((req) =>
+        {
+            var uri = req.RequestUri?.ToString() ?? "";
+            if (uri.Contains("api.themoviedb.org/3/search/movie"))
+            {
+                if (uri.Contains("Super%20Mario%3A") || uri.Contains("Super%20Mario:"))
+                {
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(emptyResultsJson, System.Text.Encoding.UTF8, "application/json")
+                    };
+                }
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(foundResultsJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (uri.Contains("api.themoviedb.org/3/movie/999/videos"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(videosJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (uri.Contains("youtube.com/oembed"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var service = new TaquillaService(context, new HttpClient(fakeHandler));
+        var result = await service.ObtenerTrailerPeliculaAsync(501);
+
+        result.Should().NotBeNull();
+        result!.TrailerKey.Should().Be("marioKey");
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WhenTmdbReturnsNoVideos_FallsBackToPreconfiguredTrailers()
+    {
+        using var context = GetInMemoryDbContext();
+        var pelicula = new Pelicula
+        {
+            IdPelicula = 1,
+            Titulo = "Spider-Man: Un Nuevo Día",
+            Sinopsis = "Sinopsis spiderman",
+            Duracion = 120,
+            Director = "Director Spiderman",
+            Clasificacion = "B"
+        };
+        context.Peliculas.Add(pelicula);
+        await context.SaveChangesAsync();
+
+        var fakeHandler = new FakeHttpMessageHandler((req) =>
+        {
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var service = new TaquillaService(context, new HttpClient(fakeHandler));
+        var result = await service.ObtenerTrailerPeliculaAsync(1);
+
+        result.Should().NotBeNull();
+        result!.TrailerKey.Should().Be("QXibcL7-XbU");
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WhenCached_ReturnsCachedImmediately()
+    {
+        using var context = GetInMemoryDbContext();
+        var pelicula = new Pelicula
+        {
+            IdPelicula = 14,
+            Titulo = "Caminos del crimen",
+            Sinopsis = "Sinopsis crimen",
+            Duracion = 110,
+            Director = "Director Crimen",
+            Clasificacion = "B15"
+        };
+        context.Peliculas.Add(pelicula);
+        await context.SaveChangesAsync();
+
+        var fakeHandler = new FakeHttpMessageHandler((req) => throw new HttpRequestException("Network failure"));
+        var service = new TaquillaService(context, new HttpClient(fakeHandler));
+
+        var firstCall = await service.ObtenerTrailerPeliculaAsync(14);
+        firstCall.Should().NotBeNull();
+        firstCall!.TrailerKey.Should().Be("R4GEdGRQVBU");
+
+        var secondCall = await service.ObtenerTrailerPeliculaAsync(14);
+        secondCall.Should().BeSameAs(firstCall);
+    }
+
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler;

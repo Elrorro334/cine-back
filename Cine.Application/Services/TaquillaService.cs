@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
@@ -997,10 +998,10 @@ public class TaquillaService : ITaquillaService
         }
 
         string folio;
-        var random = new Random();
         do
         {
-            folio = $"PRE-XIL-{random.Next(10000, 99999)}";
+            var randomSuffix = RandomNumberGenerator.GetInt32(10000, 100000);
+            folio = $"PRE-XIL-{randomSuffix}";
         } while (await _db.Preordens.AnyAsync(p => p.CodigoQr == folio));
 
         var preorden = new Preorden
@@ -1096,7 +1097,7 @@ public class TaquillaService : ITaquillaService
         if (string.IsNullOrWhiteSpace(key)) return false;
         try
         {
-            var checkUrl = $"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={key}&format=json";
+            var checkUrl = $"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={Uri.EscapeDataString(key)}&format=json";
             using var req = new HttpRequestMessage(HttpMethod.Get, checkUrl);
             using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
             return resp.IsSuccessStatusCode;

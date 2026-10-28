@@ -285,4 +285,44 @@ public class CarteleraControllerTests
         badRequestResult.Should().NotBeNull();
         badRequestResult!.StatusCode.Should().Be(400);
     }
+
+    [Fact]
+    public async Task ObtenerTrailerPelicula_WhenFound_ReturnsOkWithTrailer()
+    {
+        var mockTrailer = new PeliculaTrailerDto
+        {
+            IdPelicula = 1,
+            Titulo = "Spider-Man",
+            TrailerKey = "QXibcL7-XbU",
+            Trailers = new List<TrailerItemDto>
+            {
+                new TrailerItemDto { Key = "QXibcL7-XbU", Nombre = "Trailer Final", Tipo = "Trailer" }
+            }
+        };
+
+        _taquillaServiceMock.Setup(s => s.ObtenerTrailerPeliculaAsync(1))
+            .ReturnsAsync(mockTrailer);
+
+        var result = await _controller.ObtenerTrailerPelicula(1);
+
+        var okResult = result as OkObjectResult;
+        okResult.Should().NotBeNull();
+        okResult!.StatusCode.Should().Be(200);
+        var val = okResult.Value as PeliculaTrailerDto;
+        val.Should().NotBeNull();
+        val!.TrailerKey.Should().Be("QXibcL7-XbU");
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPelicula_WhenNotFound_ReturnsNotFound()
+    {
+        _taquillaServiceMock.Setup(s => s.ObtenerTrailerPeliculaAsync(999))
+            .ReturnsAsync((PeliculaTrailerDto?)null);
+
+        var result = await _controller.ObtenerTrailerPelicula(999);
+
+        var notFoundResult = result as NotFoundObjectResult;
+        notFoundResult.Should().NotBeNull();
+        notFoundResult!.StatusCode.Should().Be(404);
+    }
 }
