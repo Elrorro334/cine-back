@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using Cine.Application.Dtos;
@@ -934,5 +936,312 @@ public class TaquillaService : ITaquillaService
             VigenciaDias = pre.Vigencia,
             EstadoActivo = pre.EstadoActivo
         };
+    }
+
+    public async Task<PreordenDto> CrearPreordenAsync(CrearPreordenDto dto)
+    {
+        if (dto == null)
+        {
+            throw new ArgumentException("Los datos de la pre-orden son obligatorios.");
+        }
+
+        if (dto.IdFuncion <= 0)
+        {
+            throw new ArgumentException("Debes seleccionar una función válida.");
+        }
+
+        if (dto.Boletos < 1 || dto.Boletos > 10)
+        {
+            throw new ArgumentException("La cantidad de boletos debe ser entre 1 y 10.");
+        }
+
+        var nombreLimpio = dto.NombreCliente?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(nombreLimpio) || nombreLimpio.Length < 3)
+        {
+            throw new ArgumentException("El nombre del cliente debe tener al menos 3 caracteres.");
+        }
+
+        var telefonoLimpio = dto.TelefonoCliente?.Trim().Replace(" ", "").Replace("-", "") ?? string.Empty;
+        if (telefonoLimpio.Length != 10 || !telefonoLimpio.StartsWith("55") || !telefonoLimpio.All(char.IsDigit))
+        {
+            throw new ArgumentException("El teléfono debe contener exactamente 10 dígitos e iniciar con 55 (ej. 5512345678).");
+        }
+
+        var funcion = await _db.Funcions
+            .Include(f => f.IdPeliculaNavigation)
+            .Include(f => f.IdSalaNavigation)
+            .FirstOrDefaultAsync(f => f.IdFuncion == dto.IdFuncion);
+
+        if (funcion == null)
+        {
+            throw new ArgumentException($"No se encontró la función con ID {dto.IdFuncion}.");
+        }
+
+        var cliente = await _db.Clientes
+            .FirstOrDefaultAsync(c => c.NumeroTelefono == telefonoLimpio);
+
+        if (cliente == null)
+        {
+            cliente = new Cliente
+            {
+                Nombre = nombreLimpio,
+                NumeroTelefono = telefonoLimpio,
+                Correo = $"{telefonoLimpio}@xilotzin.local"
+            };
+            _db.Clientes.Add(cliente);
+            await _db.SaveChangesAsync();
+        }
+        else if (cliente.Nombre != nombreLimpio)
+        {
+            cliente.Nombre = nombreLimpio;
+            await _db.SaveChangesAsync();
+        }
+
+        string folio;
+        do
+        {
+            var randomSuffix = RandomNumberGenerator.GetInt32(10000, 100000);
+            folio = $"PRE-XIL-{randomSuffix}";
+        } while (await _db.Preordens.AnyAsync(p => p.CodigoQr == folio));
+
+        var preorden = new Preorden
+        {
+            CodigoQr = folio,
+            IdFuncion = funcion.IdFuncion,
+            IdCliente = cliente.IdCliente,
+            FechaCreacion = DateTime.Now,
+            Vigencia = 12,
+            EstadoActivo = true
+        };
+        _db.Preordens.Add(preorden);
+        await _db.SaveChangesAsync();
+
+        var precioBoleto = funcion.Precio > 0 ? funcion.Precio : 50m;
+        var subtotalBoletos = dto.Boletos * precioBoleto;
+        var detalleBoleto = new DetallePreordenBoleto
+        {
+            IdPreorden = preorden.IdPreorden,
+            Caantidad = dto.Boletos,
+            Subtotal = subtotalBoletos
+        };
+        _db.DetallePreordenBoletos.Add(detalleBoleto);
+
+        var combosList = new List<PreordenComboDto>();
+        decimal subtotalCombos = 0m;
+
+        if (dto.Combos != null && dto.Combos.Count > 0)
+        {
+            foreach (var comboDto in dto.Combos.Where(c => c.IdProducto > 0 && c.Cantidad > 0))
+            {
+                var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == comboDto.IdProducto);
+                if (producto != null)
+                {
+                    var detalleDulce = new DetallePreordenDulcerium
+                    {
+                        IdPreorden = preorden.IdPreorden,
+                        IdProducto = producto.IdProducto,
+                        Cantidad = comboDto.Cantidad
+                    };
+                    _db.DetallePreordenDulceria.Add(detalleDulce);
+                    subtotalCombos += producto.PrecioVenta * comboDto.Cantidad;
+                    combosList.Add(new PreordenComboDto
+                    {
+                        Nombre = producto.Nombre,
+                        Cantidad = comboDto.Cantidad,
+                        Precio = producto.PrecioVenta
+                    });
+                }
+            }
+        }
+
+        await _db.SaveChangesAsync();
+
+        return new PreordenDto
+        {
+            IdPreorden = preorden.IdPreorden,
+            Codigo = folio,
+            Cliente = cliente.Nombre,
+            Telefono = cliente.NumeroTelefono ?? telefonoLimpio,
+            Pelicula = funcion.IdPeliculaNavigation?.Titulo ?? "Película",
+            Horario = funcion.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
+            IdFuncion = funcion.IdFuncion,
+            BoletosGeneral = dto.Boletos,
+            PrecioBoleto = precioBoleto,
+            Asientos = new List<string>(),
+            Combos = combosList,
+            Total = subtotalBoletos + subtotalCombos,
+            FechaCreacion = preorden.FechaCreacion.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            VigenciaDias = preorden.Vigencia,
+            EstadoActivo = preorden.EstadoActivo
+        };
+    }
+
+    private static readonly ConcurrentDictionary<int, PeliculaTrailerDto> _trailersCache = new();
+
+    private static readonly Dictionary<int, (string Key, string Nombre)> FallbackTrailers = new()
+    {
+        { 1, ("QXibcL7-XbU", "Spider-Man: Un Nuevo Día (Tráiler Final)") },
+        { 2, ("I8aZahPFQnA", "Super Mario Bros. La Película (Tráiler Final)") },
+        { 14, ("R4GEdGRQVBU", "Caminos del Crimen (Tráiler Oficial)") },
+        { 15, ("cxTQ3aMYgfU", "Terrifier 3: Payaso Siniestro (Tráiler Final)") },
+        { 16, ("az6bdokjRk8", "La Posesión de la Momia (Tráiler Oficial)") },
+        { 17, ("M4ESyy4q9Qo", "Avatar: Fuego y Ceniza (Tráiler Oficial)") },
+        { 18, ("YiWXTkpP9j0", "Five Nights at Freddy's 2 (Tráiler Oficial)") },
+        { 19, ("ipzEY7c7it8", "Super Mario Galaxy (Tráiler Final)") },
+        { 20, ("lAr_uspgHm8", "Avengers: Doomsday (Tráiler Oficial)") },
+        { 21, ("9n7b0ORr-U4", "El Conjuro 4: Últimos Ritos (Tráiler Oficial)") }
+    };
+
+    private async Task<bool> EsVideoValidoEnYouTubeAsync(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+        try
+        {
+            var checkUrl = $"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={Uri.EscapeDataString(key)}&format=json";
+            using var req = new HttpRequestMessage(HttpMethod.Get, checkUrl);
+            using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+            return resp.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public async Task<PeliculaTrailerDto?> ObtenerTrailerPeliculaAsync(int idPelicula)
+    {
+        if (_trailersCache.TryGetValue(idPelicula, out var cached) && !string.IsNullOrEmpty(cached.TrailerKey))
+        {
+            return cached;
+        }
+
+        var pelicula = await _db.Peliculas.FindAsync(idPelicula);
+        if (pelicula == null) return null;
+
+        var dto = new PeliculaTrailerDto
+        {
+            IdPelicula = pelicula.IdPelicula,
+            Titulo = pelicula.Titulo
+        };
+
+        try
+        {
+            int? tmdbId = null;
+
+            // 1. Buscar en TMDB con el título completo
+            var searchUrl = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&query={Uri.EscapeDataString(pelicula.Titulo.Trim())}&language=es-MX";
+            var searchResponse = await _httpClient.GetAsync(searchUrl);
+
+            if (searchResponse.IsSuccessStatusCode)
+            {
+                var searchJson = await searchResponse.Content.ReadAsStringAsync();
+                using var searchDoc = JsonDocument.Parse(searchJson);
+                if (searchDoc.RootElement.TryGetProperty("results", out var results) && results.GetArrayLength() > 0)
+                {
+                    tmdbId = results[0].GetProperty("id").GetInt32();
+                }
+            }
+
+            // 2. Si no se encontró y tiene subtítulo (ej: Spider-Man: Un nuevo día), buscar por título base
+            if (!tmdbId.HasValue && pelicula.Titulo.Contains(':'))
+            {
+                var cleanTitle = pelicula.Titulo.Split(':')[0].Trim();
+                var fallbackSearchUrl = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&query={Uri.EscapeDataString(cleanTitle)}&language=es-MX";
+                var fbResponse = await _httpClient.GetAsync(fallbackSearchUrl);
+                if (fbResponse.IsSuccessStatusCode)
+                {
+                    var fbJson = await fbResponse.Content.ReadAsStringAsync();
+                    using var fbDoc = JsonDocument.Parse(fbJson);
+                    if (fbDoc.RootElement.TryGetProperty("results", out var fbResults) && fbResults.GetArrayLength() > 0)
+                    {
+                        tmdbId = fbResults[0].GetProperty("id").GetInt32();
+                    }
+                }
+            }
+
+            // 3. Obtener videos oficiales de TMDB incluyendo español e inglés
+            if (tmdbId.HasValue)
+            {
+                var videosUrl = $"https://api.themoviedb.org/3/movie/{tmdbId.Value}/videos?api_key={_tmdbApiKey}&include_video_language=es,es-MX,es-ES,en,null";
+                var videosResponse = await _httpClient.GetAsync(videosUrl);
+                var videosJson = videosResponse.IsSuccessStatusCode ? await videosResponse.Content.ReadAsStringAsync() : "{}";
+                using var videosDoc = JsonDocument.Parse(videosJson);
+
+                var items = new List<TrailerItemDto>();
+                if (videosDoc.RootElement.TryGetProperty("results", out var vidArray) && vidArray.GetArrayLength() > 0)
+                {
+                    foreach (var v in vidArray.EnumerateArray())
+                    {
+                        var site = GetJsonString(v, "site");
+                        var key = GetJsonString(v, "key");
+                        var name = GetJsonString(v, "name");
+                        var type = GetJsonString(v, "type");
+                        if (site == "YouTube" && !string.IsNullOrWhiteSpace(key))
+                        {
+                            items.Add(new TrailerItemDto { Key = key, Nombre = name, Tipo = type });
+                        }
+                    }
+                }
+
+                dto.Trailers = items;
+
+                // Priorizar tráilers: primero Trailers con nombre en español o doblado, luego cualquier Trailer, luego Teaser
+                var candidateTrailers = items
+                    .OrderBy(i => i.Tipo == "Trailer" ? 0 : (i.Tipo == "Teaser" ? 1 : 2))
+                    .ThenBy(i => i.Nombre.Contains("Español", StringComparison.OrdinalIgnoreCase) ||
+                                 i.Nombre.Contains("Doblado", StringComparison.OrdinalIgnoreCase) ||
+                                 i.Nombre.Contains("Tráiler", StringComparison.OrdinalIgnoreCase) ||
+                                 i.Nombre.Contains("Trailer", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                    .ToList();
+
+                // Validar contra YouTube para garantizar que el video no haya sido borrado ni esté privado
+                foreach (var candidate in candidateTrailers)
+                {
+                    if (await EsVideoValidoEnYouTubeAsync(candidate.Key))
+                    {
+                        dto.TrailerKey = candidate.Key;
+                        break;
+                    }
+                }
+
+                // Si ninguno de los tráilers pasó la verificación, probar los demás videos
+                if (string.IsNullOrEmpty(dto.TrailerKey))
+                {
+                    foreach (var candidate in items)
+                    {
+                        if (await EsVideoValidoEnYouTubeAsync(candidate.Key))
+                        {
+                            dto.TrailerKey = candidate.Key;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Silencioso ante fallos de red hacia TMDB
+        }
+
+        if (string.IsNullOrEmpty(dto.TrailerKey) && FallbackTrailers.TryGetValue(idPelicula, out var fb))
+        {
+            dto.TrailerKey = fb.Key;
+            if (dto.Trailers.Count == 0)
+            {
+                dto.Trailers.Add(new TrailerItemDto
+                {
+                    Key = fb.Key,
+                    Nombre = fb.Nombre,
+                    Tipo = "Trailer"
+                });
+            }
+        }
+
+        if (!string.IsNullOrEmpty(dto.TrailerKey))
+        {
+            _trailersCache[idPelicula] = dto;
+        }
+
+        return dto;
     }
 }

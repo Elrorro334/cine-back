@@ -27,6 +27,18 @@ public class CarteleraController : ControllerBase
 
     // Endpoint público: promociones y avisos dinámicos
     [AllowAnonymous]
+    [HttpGet("trailer/{idPelicula:int}")]
+    public async Task<IActionResult> ObtenerTrailerPelicula(int idPelicula)
+    {
+        var trailer = await _taquillaService.ObtenerTrailerPeliculaAsync(idPelicula);
+        if (trailer == null)
+        {
+            return NotFound("No se encontró el tráiler para esta película.");
+        }
+        return Ok(trailer);
+    }
+
+    [AllowAnonymous]
     [HttpGet("promociones")]
     public async Task<IActionResult> GetPromociones()
     {
@@ -96,5 +108,21 @@ public class CarteleraController : ControllerBase
         }
 
         return Ok(new { success = true, message = "Película retirada de cartelera exitosamente." });
+    }
+
+    // Endpoint público: generar pre-orden digital QR
+    [AllowAnonymous]
+    [HttpPost("preorden")]
+    public async Task<IActionResult> CrearPreorden([FromBody] CrearPreordenDto dto)
+    {
+        try
+        {
+            var preorden = await _taquillaService.CrearPreordenAsync(dto);
+            return Created($"/api/cartelera/preorden/{preorden.Codigo}", preorden);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
     }
 }
