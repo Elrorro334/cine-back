@@ -1,5 +1,6 @@
 using Cine.Application;
 using Cine.Infrastructure;
+using Cine.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -82,6 +83,19 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 });
 
 var app = builder.Build();
+
+// Siembra idempotente de butacas (HU-06). Si la BD no está disponible,
+// la API arranca igual y el error queda registrado para diagnóstico.
+try
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<CineDbContext>();
+    await DbSeeder.SeedButacasAsync(db);
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex, "No se pudieron sembrar las butacas iniciales.");
+}
 
 if (app.Environment.IsDevelopment())
 {

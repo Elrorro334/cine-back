@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace cine_back.Controllers;
 
 // [Authorize] garantiza que nadie sin un JWT válido pueda ver la cartelera del POS
- [Authorize]
+[Authorize]
 [Route("api/[controller]")]
 [ApiController]
 public class TaquillaController : ControllerBase
@@ -61,6 +61,10 @@ public class TaquillaController : ControllerBase
         catch (ArgumentException ex)
         {
             return BadRequest(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
         }
     }
 
