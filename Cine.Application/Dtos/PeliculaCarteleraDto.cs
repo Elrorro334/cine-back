@@ -1,3 +1,4 @@
+using Cine.Application.Dtos.Funcion;
 namespace Cine.Application.Dtos
 {
     public class PeliculaCarteleraDto

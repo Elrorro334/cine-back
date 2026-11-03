@@ -7,6 +7,7 @@ using Cine.Application.Interfaces;
 using Cine.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Cine.Application.Dtos.Funcion;
 
 namespace Cine.Application.Services;
 
@@ -724,11 +725,15 @@ public class TaquillaService : ITaquillaService
             EstaOcupada = ocupadasSet.Contains(b.IdButaca)
         }).ToList();
 
+        var pelicula = await _db.Peliculas.FirstOrDefaultAsync(p => p.IdPelicula == funcion.IdPelicula);
+
         return new FuncionButacasDto
         {
             IdFuncion = funcion.IdFuncion,
             IdSala = funcion.IdSala,
             NombreSala = funcion.IdSalaNavigation?.NombreSala ?? "Sala 1",
+            PeliculaTitulo = pelicula?.Titulo ?? string.Empty,
+            Horario = funcion.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
             Precio = funcion.Precio,
             Butacas = butacasDto
         };
@@ -762,6 +767,9 @@ public class TaquillaService : ITaquillaService
             throw new ArgumentException("No se pueden registrar ventas sin artículos.");
         }
 
+        // Validación de colisión de asientos (HU-06)
+        await ValidarDisponibilidadAsientosAsync(dto.Items);
+
         var totalCalculado = dto.Items.Sum(i => i.Precio * i.Cantidad);
         var metodoNormalizado = string.IsNullOrWhiteSpace(dto.MetodoPago) ? "Efectivo" : dto.MetodoPago;
 
@@ -794,6 +802,60 @@ public class TaquillaService : ITaquillaService
             FechaVenta = venta.FechaVenta,
             Items = dto.Items
         };
+    }
+
+    private async Task ValidarDisponibilidadAsientosAsync(List<RegistrarVentaItemDto> items)
+    {
+        var boletosConAsientos = items
+            .Where(i => i.Tipo == "boleto" && i.IdFuncion.HasValue && i.Asientos != null && i.Asientos.Count > 0)
+            .ToList();
+
+        if (boletosConAsientos.Count == 0) return;
+
+        var gruposPorFuncion = boletosConAsientos.GroupBy(i => i.IdFuncion!.Value);
+
+        foreach (var grupo in gruposPorFuncion)
+        {
+            var funcionId = grupo.Key;
+            var todosLosAsientos = grupo.SelectMany(i => i.Asientos!).ToList();
+
+            // 1. Validar asientos duplicados en la misma orden
+            if (todosLosAsientos.Distinct(StringComparer.OrdinalIgnoreCase).Count() != todosLosAsientos.Count)
+            {
+                throw new ArgumentException("No se pueden seleccionar asientos duplicados en la misma orden.");
+            }
+
+            var funcion = await _db.Funcions.FirstOrDefaultAsync(f => f.IdFuncion == funcionId);
+            if (funcion == null)
+            {
+                throw new ArgumentException($"No se encontró la función con ID {funcionId}.");
+            }
+
+            var idSala = funcion.IdSala;
+
+            // 2. Validar colisión contra asientos ya ocupados en la base de datos
+            foreach (var asientoCodigo in todosLosAsientos)
+            {
+                if (string.IsNullOrWhiteSpace(asientoCodigo) || asientoCodigo.Length < 2) continue;
+
+                var fila = asientoCodigo.Substring(0, 1);
+                if (!int.TryParse(asientoCodigo.Substring(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out var numero)) continue;
+
+                var butaca = await _db.Butacas
+                    .FirstOrDefaultAsync(b => b.IdSala == idSala && b.Fila == fila && b.Numero == numero);
+
+                if (butaca != null)
+                {
+                    var estaOcupada = await _db.EstadoButacaFuncions
+                        .AnyAsync(e => e.IdFuncion == funcionId && e.IdButaca == butaca.IdButaca && e.Estato);
+
+                    if (estaOcupada)
+                    {
+                        throw new InvalidOperationException($"La butaca {asientoCodigo} ya se encuentra ocupada para esta función.");
+                    }
+                }
+            }
+        }
     }
 
     private async Task ProcesarItemVentaAsync(int idVenta, RegistrarVentaItemDto item, Producto? productoBoleto)
@@ -929,7 +991,8 @@ public class TaquillaService : ITaquillaService
             IdFuncion = pre.IdFuncion,
             BoletosGeneral = boletosCantidad,
             PrecioBoleto = precioBoleto,
-            Asientos = new List<string> { "C4", "C5" },
+            // La pre-orden no reserva butacas: se asignan en taquilla al canjear el QR (HU-06).
+            Asientos = new List<string>(),
             Combos = combos,
             Total = subtotalBoletos + subtotalCombos,
             FechaCreacion = pre.FechaCreacion.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),

@@ -1,5 +1,6 @@
 using cine_back.Controllers;
 using Cine.Application.Dtos;
+using Cine.Application.Dtos.Funcion;
 using Cine.Application.Interfaces;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
@@ -167,6 +168,20 @@ public class TaquillaControllerTests
         var badReq = result as BadRequestObjectResult;
         badReq.Should().NotBeNull();
         badReq!.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task RegistrarVenta_WhenThrowsInvalidOperationException_ReturnsConflict()
+    {
+        var req = new RegistrarVentaDto();
+        _taquillaServiceMock.Setup(s => s.RegistrarVentaAsync(req))
+            .ThrowsAsync(new InvalidOperationException("La butaca A1 ya se encuentra ocupada"));
+
+        var result = await _controller.RegistrarVenta(req);
+
+        var conflict = result as ConflictObjectResult;
+        conflict.Should().NotBeNull();
+        conflict!.StatusCode.Should().Be(409);
     }
 
     [Fact]

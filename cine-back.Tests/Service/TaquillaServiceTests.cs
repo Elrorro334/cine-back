@@ -533,6 +533,86 @@ public class TaquillaServiceTests
     }
 
     [Fact]
+    public async Task RegistrarVentaAsync_WhenSeatAlreadyOccupied_ThrowsInvalidOperationException()
+    {
+        using var context = GetInMemoryDbContext();
+
+        var sala = new Sala { IdSala = 1, NombreSala = "Sala 1", CapacidadTotal = 48, TipoPantalla = "2D" };
+        var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(18), Precio = 50m };
+        var b1 = new Butaca { IdButaca = 1, IdSala = 1, Fila = "B", Numero = 1 };
+        var estadoOcupado = new EstadoButacaFuncion { IdEstado = 1, IdFuncion = 10, IdButaca = 1, Estato = true };
+
+        context.Salas.Add(sala);
+        context.Funcions.Add(funcion);
+        context.Butacas.Add(b1);
+        context.EstadoButacaFuncions.Add(estadoOcupado);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+
+        var dto = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "boleto",
+                    IdFuncion = 10,
+                    Nombre = "Boleto General",
+                    Cantidad = 1,
+                    Precio = 50m,
+                    Asientos = new List<string> { "B1" }
+                }
+            }
+        };
+
+        Func<Task> act = async () => await service.RegistrarVentaAsync(dto);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*ya se encuentra ocupada*");
+    }
+
+    [Fact]
+    public async Task RegistrarVentaAsync_WhenDuplicateSeatsInRequest_ThrowsArgumentException()
+    {
+        using var context = GetInMemoryDbContext();
+
+        var sala = new Sala { IdSala = 1, NombreSala = "Sala 1", CapacidadTotal = 48, TipoPantalla = "2D" };
+        var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(18), Precio = 50m };
+        var b1 = new Butaca { IdButaca = 1, IdSala = 1, Fila = "B", Numero = 1 };
+
+        context.Salas.Add(sala);
+        context.Funcions.Add(funcion);
+        context.Butacas.Add(b1);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+
+        var dto = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "boleto",
+                    IdFuncion = 10,
+                    Nombre = "Boleto General",
+                    Cantidad = 2,
+                    Precio = 50m,
+                    Asientos = new List<string> { "B1", "B1" }
+                }
+            }
+        };
+
+        Func<Task> act = async () => await service.RegistrarVentaAsync(dto);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*duplicados*");
+    }
+
+    [Fact]
     public async Task ObtenerPreordenAsync_WithValidAndInvalidQr_ReturnsExpectedResult()
     {
         using var context = GetInMemoryDbContext();
@@ -580,6 +660,7 @@ public class TaquillaServiceTests
         validRes!.Cliente.Should().Be("Ana López");
         validRes.Pelicula.Should().Be("Avatar");
         validRes.BoletosGeneral.Should().Be(2);
+        validRes.Asientos.Should().BeEmpty("las butacas se asignan en taquilla al canjear el QR");
         validRes.Combos.Should().HaveCount(1);
         validRes.Total.Should().Be(210m);
     }
