@@ -8,10 +8,11 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
-        // Registro de servicios de aplicación (AuthService, TaquillaService, DashboardFinancieroService)
+        // Registro de servicios de aplicación (AuthService, TaquillaService, DashboardFinancieroService, InventarioService)
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<ITaquillaService, TaquillaService>();
         services.AddScoped<IDashboardFinancieroService, DashboardFinancieroService>();
+        services.AddScoped<IInventarioService, InventarioService>();
 
         return services;
     }

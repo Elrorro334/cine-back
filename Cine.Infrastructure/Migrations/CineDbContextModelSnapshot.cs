@@ -219,9 +219,25 @@ namespace Cine.Infrastructure.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdEntrada"));
 
+                    b.Property<int>("Cantidad")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1)
+                        .HasColumnName("cantidad");
+
+                    b.Property<int>("CantidadStockAgregada")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1)
+                        .HasColumnName("cantidad_stock_agregada");
+
                     b.Property<decimal>("CostoTotal")
                         .HasColumnType("decimal(12, 2)")
                         .HasColumnName("costo_total");
+
+                    b.Property<decimal>("CostoUnitario")
+                        .HasColumnType("decimal(12, 2)")
+                        .HasColumnName("costo_unitario");
 
                     b.Property<DateTime?>("FechaEntrada")
                         .HasColumnType("datetime2")
@@ -234,12 +250,18 @@ namespace Cine.Infrastructure.Migrations
                         .HasColumnType("varchar(50)")
                         .HasColumnName("folio_factura");
 
+                    b.Property<int?>("IdFactura")
+                        .HasColumnType("int")
+                        .HasColumnName("id_factura");
+
                     b.Property<int>("IdProducto")
                         .HasColumnType("int")
                         .HasColumnName("id_producto");
 
                     b.HasKey("IdEntrada")
                         .HasName("PK__entrada___167CD61B4AC8571F");
+
+                    b.HasIndex("IdFactura");
 
                     b.HasIndex("IdProducto");
 
@@ -273,6 +295,51 @@ namespace Cine.Infrastructure.Migrations
                     b.HasIndex("IdButaca");
 
                     b.ToTable("estado_butaca_funcion", (string)null);
+                });
+
+            modelBuilder.Entity("Cine.Domain.Entities.FacturaProveedor", b =>
+                {
+                    b.Property<int>("IdFactura")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_factura");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdFactura"));
+
+                    b.Property<DateTime>("FechaRegistro")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("fecha_registro")
+                        .HasDefaultValueSql("GETDATE()");
+
+                    b.Property<string>("Folio")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("folio");
+
+                    b.Property<int>("IdProveedor")
+                        .HasColumnType("int")
+                        .HasColumnName("id_proveedor");
+
+                    b.Property<int?>("IdVendedor")
+                        .HasColumnType("int")
+                        .HasColumnName("id_vendedor");
+
+                    b.Property<decimal>("TotalPagado")
+                        .HasColumnType("decimal(12, 2)")
+                        .HasColumnName("total_pagado");
+
+                    b.HasKey("IdFactura")
+                        .HasName("PK__facturas__8A7E01E2");
+
+                    b.HasIndex("IdVendedor");
+
+                    b.HasIndex(new[] { "IdProveedor", "Folio" }, "UQ_facturas_proveedor_folio")
+                        .IsUnique();
+
+                    b.ToTable("facturas_proveedor", (string)null);
                 });
 
             modelBuilder.Entity("Cine.Domain.Entities.Funcion", b =>
@@ -477,6 +544,12 @@ namespace Cine.Infrastructure.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdProducto"));
 
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
                     b.Property<string>("CodigoBarras")
                         .IsRequired()
                         .HasMaxLength(255)
@@ -486,6 +559,12 @@ namespace Cine.Infrastructure.Migrations
                     b.Property<decimal>("Costo")
                         .HasColumnType("decimal(12, 2)")
                         .HasColumnName("costo");
+
+                    b.Property<int>("FactorEquivalencia")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1)
+                        .HasColumnName("factor_equivalencia");
 
                     b.Property<int>("IdCategoria")
                         .HasColumnType("int")
@@ -518,6 +597,52 @@ namespace Cine.Infrastructure.Migrations
                     b.HasIndex(new[] { "CodigoBarras" }, "IX_producto_codigo_barras");
 
                     b.ToTable("producto", (string)null);
+                });
+
+            modelBuilder.Entity("Cine.Domain.Entities.Proveedor", b =>
+                {
+                    b.Property<int>("IdProveedor")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("id_proveedor");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdProveedor"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<string>("Contacto")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("contacto");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("nombre");
+
+                    b.Property<string>("Rfc")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("rfc");
+
+                    b.Property<string>("Telefono")
+                        .HasMaxLength(30)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("telefono");
+
+                    b.HasKey("IdProveedor")
+                        .HasName("PK__proveedo__8D3C3E3B");
+
+                    b.ToTable("proveedor", (string)null);
                 });
 
             modelBuilder.Entity("Cine.Domain.Entities.RedesAutorizada", b =>
@@ -743,11 +868,19 @@ namespace Cine.Infrastructure.Migrations
 
             modelBuilder.Entity("Cine.Domain.Entities.EntradaMercancium", b =>
                 {
+                    b.HasOne("Cine.Domain.Entities.FacturaProveedor", "IdFacturaNavigation")
+                        .WithMany("Entradas")
+                        .HasForeignKey("IdFactura")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("FK_entrada_factura");
+
                     b.HasOne("Cine.Domain.Entities.Producto", "IdProductoNavigation")
                         .WithMany("EntradaMercancia")
                         .HasForeignKey("IdProducto")
                         .IsRequired()
                         .HasConstraintName("Fk_entrada_producto");
+
+                    b.Navigation("IdFacturaNavigation");
 
                     b.Navigation("IdProductoNavigation");
                 });
@@ -761,6 +894,25 @@ namespace Cine.Infrastructure.Migrations
                         .HasConstraintName("FK_estado_butaca");
 
                     b.Navigation("IdButacaNavigation");
+                });
+
+            modelBuilder.Entity("Cine.Domain.Entities.FacturaProveedor", b =>
+                {
+                    b.HasOne("Cine.Domain.Entities.Proveedor", "IdProveedorNavigation")
+                        .WithMany("Facturas")
+                        .HasForeignKey("IdProveedor")
+                        .IsRequired()
+                        .HasConstraintName("FK_factura_proveedor");
+
+                    b.HasOne("Cine.Domain.Entities.Vendedor", "IdVendedorNavigation")
+                        .WithMany()
+                        .HasForeignKey("IdVendedor")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("FK_factura_vendedor");
+
+                    b.Navigation("IdProveedorNavigation");
+
+                    b.Navigation("IdVendedorNavigation");
                 });
 
             modelBuilder.Entity("Cine.Domain.Entities.Funcion", b =>
@@ -868,6 +1020,11 @@ namespace Cine.Infrastructure.Migrations
                     b.Navigation("Preordens");
                 });
 
+            modelBuilder.Entity("Cine.Domain.Entities.FacturaProveedor", b =>
+                {
+                    b.Navigation("Entradas");
+                });
+
             modelBuilder.Entity("Cine.Domain.Entities.Funcion", b =>
                 {
                     b.Navigation("Preordens");
@@ -896,6 +1053,11 @@ namespace Cine.Infrastructure.Migrations
                     b.Navigation("StockFraccionadoComoFraccion");
 
                     b.Navigation("StockFraccionadoComoMaestro");
+                });
+
+            modelBuilder.Entity("Cine.Domain.Entities.Proveedor", b =>
+                {
+                    b.Navigation("Facturas");
                 });
 
             modelBuilder.Entity("Cine.Domain.Entities.Rol", b =>
