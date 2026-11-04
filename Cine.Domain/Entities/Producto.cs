@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+
 namespace Cine.Domain.Entities
 {
-
     public partial class Producto
     {
         public int IdProducto { get; set; }
@@ -20,6 +20,10 @@ namespace Cine.Domain.Entities
         public int StockActual { get; set; }
 
         public int StockMinimo { get; set; }
+
+        public int FactorEquivalencia { get; set; } = 1;
+
+        public bool Activo { get; set; } = true;
 
         public virtual ICollection<DetallePreordenDulcerium> DetallePreordenDulceria { get; set; } = new List<DetallePreordenDulcerium>();
 

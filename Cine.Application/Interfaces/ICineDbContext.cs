@@ -22,5 +22,8 @@ public interface ICineDbContext
     DbSet<InventarioStockFraccionado> InventarioStockFraccionados { get; set; }
     DbSet<Rol> Rols { get; set; }
     DbSet<Cliente> Clientes { get; set; }
+    DbSet<EntradaMercancium> EntradaMercancia { get; set; }
+    DbSet<Proveedor> Proveedores { get; set; }
+    DbSet<FacturaProveedor> FacturasProveedor { get; set; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -53,6 +53,10 @@ public partial class CineDbContext : DbContext, ICineDbContext
 
     public virtual DbSet<Ventum> Venta { get; set; }
 
+    public virtual DbSet<Proveedor> Proveedores { get; set; }
+
+    public virtual DbSet<FacturaProveedor> FacturasProveedor { get; set; }
+
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -196,10 +200,22 @@ public partial class CineDbContext : DbContext, ICineDbContext
                 .HasColumnName("folio_factura");
             entity.Property(e => e.IdProducto).HasColumnName("id_producto");
 
+            entity.Property(e => e.IdFactura).HasColumnName("id_factura");
+            entity.Property(e => e.Cantidad).HasColumnName("cantidad").HasDefaultValue(1);
+            entity.Property(e => e.CostoUnitario)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("costo_unitario");
+            entity.Property(e => e.CantidadStockAgregada).HasColumnName("cantidad_stock_agregada").HasDefaultValue(1);
+
             entity.HasOne(d => d.IdProductoNavigation).WithMany(p => p.EntradaMercancia)
                 .HasForeignKey(d => d.IdProducto)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("Fk_entrada_producto");
+
+            entity.HasOne(d => d.IdFacturaNavigation).WithMany(p => p.Entradas)
+                .HasForeignKey(d => d.IdFactura)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("FK_entrada_factura");
         });
 
         modelBuilder.Entity<EstadoButacaFuncion>(entity =>
@@ -362,6 +378,8 @@ public partial class CineDbContext : DbContext, ICineDbContext
                 .HasColumnName("precio_venta");
             entity.Property(e => e.StockActual).HasColumnName("stock_actual");
             entity.Property(e => e.StockMinimo).HasColumnName("stock_minimo");
+            entity.Property(e => e.FactorEquivalencia).HasColumnName("factor_equivalencia").HasDefaultValue(1);
+            entity.Property(e => e.Activo).HasColumnName("activo").HasDefaultValue(true);
 
             entity.HasOne(d => d.IdCategoriaNavigation).WithMany(p => p.Productos)
                 .HasForeignKey(d => d.IdCategoria)
@@ -462,6 +480,67 @@ public partial class CineDbContext : DbContext, ICineDbContext
                 .HasForeignKey(d => d.IdVendedor)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("Fk_venta_vendedor");
+        });
+
+        modelBuilder.Entity<Proveedor>(entity =>
+        {
+            entity.HasKey(e => e.IdProveedor).HasName("PK__proveedo__8D3C3E3B");
+
+            entity.ToTable("proveedor");
+
+            entity.Property(e => e.IdProveedor).HasColumnName("id_proveedor");
+            entity.Property(e => e.Nombre)
+                .HasMaxLength(150)
+                .IsUnicode(false)
+                .HasColumnName("nombre");
+            entity.Property(e => e.Rfc)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasColumnName("rfc");
+            entity.Property(e => e.Telefono)
+                .HasMaxLength(30)
+                .IsUnicode(false)
+                .HasColumnName("telefono");
+            entity.Property(e => e.Contacto)
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .HasColumnName("contacto");
+            entity.Property(e => e.Activo)
+                .HasColumnName("activo")
+                .HasDefaultValue(true);
+        });
+
+        modelBuilder.Entity<FacturaProveedor>(entity =>
+        {
+            entity.HasKey(e => e.IdFactura).HasName("PK__facturas__8A7E01E2");
+
+            entity.ToTable("facturas_proveedor");
+
+            entity.Property(e => e.IdFactura).HasColumnName("id_factura");
+            entity.Property(e => e.IdProveedor).HasColumnName("id_proveedor");
+            entity.Property(e => e.Folio)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("folio");
+            entity.Property(e => e.TotalPagado)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("total_pagado");
+            entity.Property(e => e.FechaRegistro)
+                .HasColumnName("fecha_registro")
+                .HasDefaultValueSql("GETDATE()");
+            entity.Property(e => e.IdVendedor).HasColumnName("id_vendedor");
+
+            entity.HasIndex(e => new { e.IdProveedor, e.Folio }, "UQ_facturas_proveedor_folio").IsUnique();
+
+            entity.HasOne(d => d.IdProveedorNavigation).WithMany(p => p.Facturas)
+                .HasForeignKey(d => d.IdProveedor)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_factura_proveedor");
+
+            entity.HasOne(d => d.IdVendedorNavigation).WithMany()
+                .HasForeignKey(d => d.IdVendedor)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("FK_factura_vendedor");
         });
 
         OnModelCreatingPartial(modelBuilder);
