@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Cine.Domain.Entities;
@@ -34,6 +34,8 @@ public partial class CineDbContext : DbContext, ICineDbContext
     public virtual DbSet<EstadoButacaFuncion> EstadoButacaFuncions { get; set; }
 
     public virtual DbSet<Funcion> Funcions { get; set; }
+
+    public virtual DbSet<InventarioStockFraccionado> InventarioStockFraccionados { get; set; }
 
     public virtual DbSet<Pelicula> Peliculas { get; set; }
 
@@ -243,6 +245,41 @@ public partial class CineDbContext : DbContext, ICineDbContext
                 .HasConstraintName("FK_Funcion_Sala");
         });
 
+        modelBuilder.Entity<InventarioStockFraccionado>(entity =>
+        {
+            entity.HasKey(e => e.IdStockFraccionado).HasName("PK_inventario_stock_fraccionado");
+
+            entity.ToTable("inventario_stock_fraccionado");
+
+            entity.Property(e => e.IdStockFraccionado).HasColumnName("id_stock_fraccionado");
+            entity.Property(e => e.IdProductoMaestro).HasColumnName("id_producto_maestro");
+            entity.Property(e => e.IdProductoFraccion).HasColumnName("id_producto_fraccion");
+            entity.Property(e => e.FactorFraccion).HasColumnName("factor_fraccion");
+            entity.Property(e => e.StockFraccionesActual).HasColumnName("stock_fracciones_actual");
+            entity.Property(e => e.StockFraccionesMinimo).HasColumnName("stock_fracciones_minimo");
+            entity.Property(e => e.UnidadMedidaFraccion)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("unidad_medida_fraccion");
+            entity.Property(e => e.UnidadMedidaMaestra)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("unidad_medida_maestra");
+            entity.Property(e => e.UltimaActualizacion).HasColumnName("ultima_actualizacion");
+
+            entity.HasOne(d => d.IdProductoMaestroNavigation)
+                .WithMany(p => p.StockFraccionadoComoMaestro)
+                .HasForeignKey(d => d.IdProductoMaestro)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_stock_fraccionado_producto_maestro");
+
+            entity.HasOne(d => d.IdProductoFraccionNavigation)
+                .WithMany(p => p.StockFraccionadoComoFraccion)
+                .HasForeignKey(d => d.IdProductoFraccion)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_stock_fraccionado_producto_fraccion");
+        });
+
         modelBuilder.Entity<Pelicula>(entity =>
         {
             entity.HasKey(e => e.IdPelicula).HasName("PK__pelicula__B5017F4D9F56E1A2");
@@ -305,6 +342,8 @@ public partial class CineDbContext : DbContext, ICineDbContext
             entity.HasKey(e => e.IdProducto).HasName("PK__producto__FF341C0D9FC3B36F");
 
             entity.ToTable("producto");
+
+            entity.HasIndex(e => e.CodigoBarras, "IX_producto_codigo_barras");
 
             entity.Property(e => e.IdProducto).HasColumnName("id_producto");
             entity.Property(e => e.CodigoBarras)

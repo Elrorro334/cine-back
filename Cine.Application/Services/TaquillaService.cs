@@ -13,6 +13,10 @@ namespace Cine.Application.Services;
 
 public class TaquillaService : ITaquillaService
 {
+    public const string SkuRebanadaPizza = "7501006";
+    public const string SkuPizzaCompleta = "7501007";
+    public const int FactorRebanadasPorPizza = 8;
+
     private static readonly Dictionary<string, string> MapaCertificaciones = new(StringComparer.OrdinalIgnoreCase)
     {
         { "R", "C" },
@@ -64,7 +68,31 @@ public class TaquillaService : ITaquillaService
             query = query.Where(p => p.Titulo.Contains(busqueda));
         }
 
-        var cartelera = await query.Select(p => new PeliculaCarteleraDto
+        var peliculasRaw = await query
+            .Select(p => new
+            {
+                p.IdPelicula,
+                p.Titulo,
+                p.Sinopsis,
+                p.Duracion,
+                p.Clasificacion,
+                p.Director,
+                p.PosterImage,
+                Funciones = p.Funcions
+                    .Where(f => f.FechaFuncion.Date == fechaHoy)
+                    .OrderBy(f => f.HoraInicio)
+                    .Select(f => new
+                    {
+                        f.IdFuncion,
+                        f.HoraInicio,
+                        NombreSala = f.IdSalaNavigation != null ? f.IdSalaNavigation.NombreSala : string.Empty,
+                        f.Precio
+                    })
+                    .ToList()
+            })
+            .ToListAsync();
+
+        var cartelera = peliculasRaw.Select(p => new PeliculaCarteleraDto
         {
             IdPelicula = p.IdPelicula,
             Titulo = p.Titulo,
@@ -73,19 +101,16 @@ public class TaquillaService : ITaquillaService
             Clasificacion = p.Clasificacion ?? string.Empty,
             Director = p.Director ?? string.Empty,
             poster_image = p.PosterImage ?? string.Empty,
-
-            Funciones = p.Funcions
-                .Where(f => f.FechaFuncion.Date == fechaHoy)
-                .OrderBy(f => f.HoraInicio)
+            Funciones = p.Funciones
                 .Select(f => new FuncionHorarioDto
                 {
                     IdFuncion = f.IdFuncion,
-                    Hora = f.HoraInicio.ToString(),
-                    NombreSala = f.IdSalaNavigation != null ? f.IdSalaNavigation.NombreSala : string.Empty,
+                    Hora = f.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
+                    NombreSala = f.NombreSala,
                     Precio = f.Precio
                 })
                 .ToList()
-        }).ToListAsync();
+        }).ToList();
 
         return cartelera;
     }
@@ -375,7 +400,7 @@ public class TaquillaService : ITaquillaService
             .Select(f => new FuncionHorarioDto
             {
                 IdFuncion = f.IdFuncion,
-                Hora = f.HoraInicio.ToString(),
+                Hora = f.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
                 NombreSala = sala.NombreSala,
                 Precio = f.Precio
             })
@@ -743,21 +768,433 @@ public class TaquillaService : ITaquillaService
     {
         var productos = await _db.Productos
             .Include(p => p.IdCategoriaNavigation)
-            .Where(p => p.IdCategoriaNavigation.Nombre != "Taquilla")
+            .Where(p => p.IdCategoriaNavigation == null || p.IdCategoriaNavigation.Nombre != "Taquilla")
             .ToListAsync();
 
-        return productos.Select(p => new ProductoDto
+        var stockFraccionado = await _db.InventarioStockFraccionados.FirstOrDefaultAsync();
+
+        return productos
+            .Select(p => MapearProductoDto(p, stockFraccionado))
+            .ToList();
+    }
+
+    private static ProductoDto MapearProductoDto(Producto p, InventarioStockFraccionado? sf)
+    {
+        var esRebanada = (sf != null && p.IdProducto == sf.IdProductoFraccion)
+                         || string.Equals(p.CodigoBarras, SkuRebanadaPizza, StringComparison.OrdinalIgnoreCase);
+        var esPizzaCompleta = (sf != null && p.IdProducto == sf.IdProductoMaestro)
+                              || string.Equals(p.CodigoBarras, SkuPizzaCompleta, StringComparison.OrdinalIgnoreCase);
+        var esFraccionado = esRebanada || esPizzaCompleta;
+        var factor = sf?.FactorFraccion > 0 ? sf.FactorFraccion : FactorRebanadasPorPizza;
+
+        var stockCalculado = p.StockActual;
+        if (sf != null)
+        {
+            if (esRebanada)
+            {
+                stockCalculado = sf.StockFraccionesActual;
+            }
+            else if (esPizzaCompleta)
+            {
+                stockCalculado = sf.StockFraccionesActual / factor;
+            }
+        }
+
+        string? descripcionDescuento = null;
+        if (esRebanada)
+        {
+            descripcionDescuento = "Descuenta 1 rebanada del stock";
+        }
+        else if (esPizzaCompleta)
+        {
+            descripcionDescuento = $"Descuenta {factor} rebanadas del stock";
+        }
+
+        return new ProductoDto
         {
             IdProducto = p.IdProducto,
             Sku = p.CodigoBarras,
             Nombre = p.Nombre,
             Categoria = p.IdCategoriaNavigation?.Nombre ?? "Snacks",
             Precio = p.PrecioVenta,
-            Stock = p.StockActual,
+            Stock = stockCalculado,
             Img = ImagenesDulceria.TryGetValue(p.CodigoBarras, out var imgUrl)
                 ? imgUrl
-                : "https://images.unsplash.com/photo-1585647347384-2593bc35786b?q=80&w=400"
-        }).ToList();
+                : "https://images.unsplash.com/photo-1585647347384-2593bc35786b?q=80&w=400",
+            EsFraccionado = esFraccionado,
+            FactorFraccion = esPizzaCompleta ? factor : 1,
+            DescripcionDescuento = descripcionDescuento
+        };
+    }
+
+    public async Task<CatalogoDulceriaPosDto> ObtenerCatalogoDulceriaPosAsync()
+    {
+        var todos = await ObtenerProductosDulceriaAsync();
+        var stockFraccionadoEntidad = await _db.InventarioStockFraccionados.FirstOrDefaultAsync();
+        var monitor = ConstruirMonitorStockFraccionado(todos, stockFraccionadoEntidad, 0);
+
+        return new CatalogoDulceriaPosDto
+        {
+            StockFraccionado = monitor,
+            SnacksYBebidas = todos.Where(p => !p.EsFraccionado).ToList(),
+            TodosLosProductos = todos
+        };
+    }
+
+    private static StockFraccionadoDto? ConstruirMonitorStockFraccionado(
+        List<ProductoDto> productos,
+        InventarioStockFraccionado? sf,
+        int rebanadasDescontadasEnOrden)
+    {
+        var prodRebanada = productos.FirstOrDefault(p =>
+            (sf != null && p.IdProducto == sf.IdProductoFraccion) ||
+            string.Equals(p.Sku, SkuRebanadaPizza, StringComparison.OrdinalIgnoreCase));
+
+        var prodPizza = productos.FirstOrDefault(p =>
+            (sf != null && p.IdProducto == sf.IdProductoMaestro) ||
+            string.Equals(p.Sku, SkuPizzaCompleta, StringComparison.OrdinalIgnoreCase));
+
+        if (sf == null && prodRebanada == null && prodPizza == null)
+        {
+            return null;
+        }
+
+        var factor = sf?.FactorFraccion > 0 ? sf.FactorFraccion : FactorRebanadasPorPizza;
+        var rebanadasBase = sf?.StockFraccionesActual
+                            ?? prodRebanada?.Stock
+                            ?? ((prodPizza?.Stock ?? 0) * factor);
+
+        var rebanadasRestantes = Math.Max(0, rebanadasBase - rebanadasDescontadasEnOrden);
+        var pizzasEquivalentes = rebanadasRestantes / factor;
+        var rebanadasSueltas = rebanadasRestantes % factor;
+
+        var clonRebanada = prodRebanada != null ? ClonarProductoConStock(prodRebanada, rebanadasRestantes) : null;
+        var clonPizza = prodPizza != null ? ClonarProductoConStock(prodPizza, pizzasEquivalentes) : null;
+
+        return new StockFraccionadoDto
+        {
+            IdStockFraccionado = sf?.IdStockFraccionado ?? 1,
+            NombreInsumo = "PIZZAS",
+            StockRebanadasActual = rebanadasRestantes,
+            FactorFraccion = factor,
+            PizzasCompletasEquivalentes = pizzasEquivalentes,
+            RebanadasSueltas = rebanadasSueltas,
+            EtiquetaMonitor = $"Stock: {rebanadasRestantes} rebanadas ({pizzasEquivalentes} pizzas)",
+            ProductoRebanada = clonRebanada,
+            ProductoPizzaCompleta = clonPizza
+        };
+    }
+
+    private static ProductoDto ClonarProductoConStock(ProductoDto origen, int nuevoStock)
+    {
+        return new ProductoDto
+        {
+            IdProducto = origen.IdProducto,
+            Sku = origen.Sku,
+            Nombre = origen.Nombre,
+            Categoria = origen.Categoria,
+            Precio = origen.Precio,
+            Stock = nuevoStock,
+            Img = origen.Img,
+            EsFraccionado = origen.EsFraccionado,
+            FactorFraccion = origen.FactorFraccion,
+            DescripcionDescuento = origen.DescripcionDescuento
+        };
+    }
+
+    public async Task<ProductoDto?> BuscarProductoPorSkuAsync(string sku)
+    {
+        if (string.IsNullOrWhiteSpace(sku))
+        {
+            throw new ArgumentException("El código de barras (SKU) es obligatorio.");
+        }
+
+        var skuLimpio = sku.Trim();
+        var productos = await ObtenerProductosDulceriaAsync();
+        var encontrado = productos.FirstOrDefault(p =>
+            string.Equals(p.Sku, skuLimpio, StringComparison.OrdinalIgnoreCase));
+
+        if (encontrado == null)
+        {
+            return null;
+        }
+
+        if (encontrado.Stock <= 0)
+        {
+            throw new InvalidOperationException(
+                $"El artículo '{encontrado.Nombre}' (SKU: {encontrado.Sku}) tiene inventario 0 y no puede agregarse a la venta.");
+        }
+
+        return encontrado;
+    }
+
+    public async Task<ResumenOrdenCalculadoDto> CalcularOrdenPosAsync(CalcularOrdenRequestDto request)
+    {
+        if (request == null)
+        {
+            throw new ArgumentException("La solicitud de cálculo de orden es obligatoria.");
+        }
+
+        var productosCatalogo = await ObtenerProductosDulceriaAsync();
+        var sfEntidad = await _db.InventarioStockFraccionados.FirstOrDefaultAsync();
+
+        var lineas = ClonarLineasEntrada(request.ItemsActuales);
+        ProductoDto? productoAgregado = null;
+
+        if (!string.IsNullOrWhiteSpace(request.SkuAgregar) || request.IdProductoAgregar.HasValue)
+        {
+            productoAgregado = ResolverProductoSolicitado(request, productosCatalogo);
+            AplicarCambioEnLineas(lineas, productoAgregado, request.CantidadAgregar);
+        }
+
+        var rebanadasConsumidas = ValidarYCalcularRebanadasEnOrden(lineas, productosCatalogo, sfEntidad);
+        var monitorActualizado = ConstruirMonitorStockFraccionado(productosCatalogo, sfEntidad, rebanadasConsumidas);
+        var productosActualizados = CalcularCatalogoConStockRestante(productosCatalogo, lineas, monitorActualizado);
+
+        return ConstruirResumenCalculado(lineas, productosCatalogo, monitorActualizado, productosActualizados, productoAgregado);
+    }
+
+    private static List<RegistrarVentaItemDto> ClonarLineasEntrada(List<RegistrarVentaItemDto>? items)
+    {
+        if (items == null) return new List<RegistrarVentaItemDto>();
+
+        return items
+            .Where(i => i.Cantidad > 0)
+            .Select(i => new RegistrarVentaItemDto
+            {
+                IdProducto = i.IdProducto,
+                IdFuncion = i.IdFuncion,
+                Sku = i.Sku,
+                Nombre = i.Nombre,
+                Tipo = string.IsNullOrWhiteSpace(i.Tipo) ? "dulceria" : i.Tipo,
+                Cantidad = i.Cantidad,
+                Precio = i.Precio,
+                Asientos = i.Asientos != null ? new List<string>(i.Asientos) : null
+            })
+            .ToList();
+    }
+
+    private static ProductoDto ResolverProductoSolicitado(CalcularOrdenRequestDto request, List<ProductoDto> catalogo)
+    {
+        ProductoDto? producto = null;
+
+        if (request.IdProductoAgregar.HasValue && request.IdProductoAgregar.Value > 0)
+        {
+            producto = catalogo.FirstOrDefault(p => p.IdProducto == request.IdProductoAgregar.Value);
+        }
+
+        if (producto == null && !string.IsNullOrWhiteSpace(request.SkuAgregar))
+        {
+            var skuLimpio = request.SkuAgregar.Trim();
+            producto = catalogo.FirstOrDefault(p =>
+                string.Equals(p.Sku, skuLimpio, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (producto == null)
+        {
+            throw new KeyNotFoundException("No se encontró el producto con el código de barras (SKU) especificado.");
+        }
+
+        return producto;
+    }
+
+    private static void AplicarCambioEnLineas(List<RegistrarVentaItemDto> lineas, ProductoDto producto, int deltaCantidad)
+    {
+        if (deltaCantidad == 0)
+        {
+            throw new ArgumentException("La cantidad a agregar o modificar debe ser distinta de cero.");
+        }
+
+        var existente = lineas.FirstOrDefault(l =>
+            l.Tipo == "dulceria" &&
+            ((l.IdProducto.HasValue && l.IdProducto.Value == producto.IdProducto) ||
+             (!string.IsNullOrWhiteSpace(l.Sku) && string.Equals(l.Sku, producto.Sku, StringComparison.OrdinalIgnoreCase))));
+
+        if (existente == null)
+        {
+            if (deltaCantidad < 0) return;
+
+            lineas.Add(new RegistrarVentaItemDto
+            {
+                IdProducto = producto.IdProducto,
+                Sku = producto.Sku,
+                Nombre = producto.Nombre,
+                Tipo = "dulceria",
+                Cantidad = deltaCantidad,
+                Precio = producto.Precio
+            });
+            return;
+        }
+
+        existente.Cantidad += deltaCantidad;
+        existente.Precio = producto.Precio;
+        existente.Nombre = producto.Nombre;
+        existente.Sku = producto.Sku;
+        existente.IdProducto = producto.IdProducto;
+
+        if (existente.Cantidad <= 0)
+        {
+            lineas.Remove(existente);
+        }
+    }
+
+    private static int ValidarYCalcularRebanadasEnOrden(
+        List<RegistrarVentaItemDto> lineas,
+        List<ProductoDto> catalogo,
+        InventarioStockFraccionado? sf)
+    {
+        var factor = sf?.FactorFraccion > 0 ? sf.FactorFraccion : FactorRebanadasPorPizza;
+        var prodRebanada = catalogo.FirstOrDefault(p =>
+            (sf != null && p.IdProducto == sf.IdProductoFraccion) ||
+            string.Equals(p.Sku, SkuRebanadaPizza, StringComparison.OrdinalIgnoreCase));
+        var prodPizza = catalogo.FirstOrDefault(p =>
+            (sf != null && p.IdProducto == sf.IdProductoMaestro) ||
+            string.Equals(p.Sku, SkuPizzaCompleta, StringComparison.OrdinalIgnoreCase));
+
+        var rebanadasDisponiblesBase = sf?.StockFraccionesActual
+                                       ?? prodRebanada?.Stock
+                                       ?? ((prodPizza?.Stock ?? 0) * factor);
+
+        int rebanadasSolicitadas = 0;
+
+        foreach (var linea in lineas.Where(l => l.Tipo == "dulceria"))
+        {
+            var prod = BuscarProductoEnCatalogo(linea, catalogo);
+            if (prod == null) continue;
+
+            if (prod.Stock <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"El artículo '{prod.Nombre}' tiene inventario actual 0 y no puede agregarse a la venta.");
+            }
+
+            if (prod.EsFraccionado)
+            {
+                rebanadasSolicitadas += linea.Cantidad * prod.FactorFraccion;
+            }
+            else if (linea.Cantidad > prod.Stock)
+            {
+                throw new InvalidOperationException(
+                    $"Stock insuficiente para '{prod.Nombre}'. Disponible en inventario: {prod.Stock}.");
+            }
+        }
+
+        if (rebanadasSolicitadas > 0 && rebanadasSolicitadas > rebanadasDisponiblesBase)
+        {
+            throw new InvalidOperationException(
+                $"Stock fraccionado insuficiente de Pizzas. Requerido: {rebanadasSolicitadas} rebanadas, Disponible: {rebanadasDisponiblesBase} rebanadas.");
+        }
+
+        return rebanadasSolicitadas;
+    }
+
+    private static ProductoDto? BuscarProductoEnCatalogo(RegistrarVentaItemDto linea, List<ProductoDto> catalogo)
+    {
+        if (linea.IdProducto.HasValue && linea.IdProducto.Value > 0)
+        {
+            var porId = catalogo.FirstOrDefault(p => p.IdProducto == linea.IdProducto.Value);
+            if (porId != null) return porId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(linea.Sku))
+        {
+            var porSku = catalogo.FirstOrDefault(p => string.Equals(p.Sku, linea.Sku, StringComparison.OrdinalIgnoreCase));
+            if (porSku != null) return porSku;
+        }
+
+        return catalogo.FirstOrDefault(p => string.Equals(p.Nombre, linea.Nombre, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static List<ProductoDto> CalcularCatalogoConStockRestante(
+        List<ProductoDto> catalogoBase,
+        List<RegistrarVentaItemDto> lineas,
+        StockFraccionadoDto? monitor)
+    {
+        var resultado = new List<ProductoDto>(catalogoBase.Count);
+
+        foreach (var prod in catalogoBase)
+        {
+            if (prod.EsFraccionado && monitor != null)
+            {
+                var nuevoStock = prod.FactorFraccion > 1
+                    ? monitor.PizzasCompletasEquivalentes
+                    : monitor.StockRebanadasActual;
+                resultado.Add(ClonarProductoConStock(prod, nuevoStock));
+                continue;
+            }
+
+            var cantidadEnCarrito = lineas
+                .Where(l => l.Tipo == "dulceria" &&
+                            ((l.IdProducto.HasValue && l.IdProducto.Value == prod.IdProducto) ||
+                             string.Equals(l.Sku, prod.Sku, StringComparison.OrdinalIgnoreCase)))
+                .Sum(l => l.Cantidad);
+
+            resultado.Add(ClonarProductoConStock(prod, Math.Max(0, prod.Stock - cantidadEnCarrito)));
+        }
+
+        return resultado;
+    }
+
+    private static ResumenOrdenCalculadoDto ConstruirResumenCalculado(
+        List<RegistrarVentaItemDto> lineas,
+        List<ProductoDto> catalogo,
+        StockFraccionadoDto? monitor,
+        List<ProductoDto> productosActualizados,
+        ProductoDto? productoAgregado)
+    {
+        var itemsCalculados = new List<OrdenLineaCalculadaDto>();
+        decimal subtotalBoletos = 0m;
+        decimal subtotalDulceria = 0m;
+        int idx = 1;
+
+        foreach (var linea in lineas)
+        {
+            var esBoleto = string.Equals(linea.Tipo, "boleto", StringComparison.OrdinalIgnoreCase);
+            var prodCatalogo = esBoleto ? null : BuscarProductoEnCatalogo(linea, catalogo);
+            var precioUnitario = prodCatalogo?.Precio ?? linea.Precio;
+            var subtotalLinea = precioUnitario * linea.Cantidad;
+
+            if (esBoleto)
+            {
+                subtotalBoletos += subtotalLinea;
+            }
+            else
+            {
+                subtotalDulceria += subtotalLinea;
+            }
+
+            var idLinea = esBoleto
+                ? $"bol_{linea.IdFuncion ?? 0}_{idx}"
+                : $"snk_{prodCatalogo?.IdProducto ?? linea.IdProducto ?? idx}";
+
+            itemsCalculados.Add(new OrdenLineaCalculadaDto
+            {
+                IdLinea = idLinea,
+                IdProducto = prodCatalogo?.IdProducto ?? linea.IdProducto,
+                IdFuncion = linea.IdFuncion,
+                Sku = prodCatalogo?.Sku ?? linea.Sku,
+                Nombre = prodCatalogo?.Nombre ?? linea.Nombre,
+                Tipo = esBoleto ? "boleto" : "dulceria",
+                EtiquetaCategoria = esBoleto ? "TAQUILLA" : "DULCERÍA",
+                Cantidad = linea.Cantidad,
+                PrecioUnitario = precioUnitario,
+                Subtotal = subtotalLinea,
+                Asientos = linea.Asientos
+            });
+            idx++;
+        }
+
+        return new ResumenOrdenCalculadoDto
+        {
+            Items = itemsCalculados,
+            TotalArticulos = itemsCalculados.Sum(i => i.Cantidad),
+            SubtotalBoletos = subtotalBoletos,
+            SubtotalDulceria = subtotalDulceria,
+            TotalVenta = subtotalBoletos + subtotalDulceria,
+            StockFraccionado = monitor,
+            ProductosActualizados = productosActualizados,
+            ProductoAgregado = productoAgregado
+        };
     }
 
     public async Task<VentaConfirmadaDto> RegistrarVentaAsync(RegistrarVentaDto dto)
@@ -769,6 +1206,9 @@ public class TaquillaService : ITaquillaService
 
         // Validación de colisión de asientos (HU-06)
         await ValidarDisponibilidadAsientosAsync(dto.Items);
+
+        // Validación de inventario y stock fraccionado de dulcería (HU-07)
+        await ValidarDisponibilidadDulceriaAsync(dto.Items);
 
         var totalCalculado = dto.Items.Sum(i => i.Precio * i.Cantidad);
         var metodoNormalizado = string.IsNullOrWhiteSpace(dto.MetodoPago) ? "Efectivo" : dto.MetodoPago;
@@ -802,6 +1242,92 @@ public class TaquillaService : ITaquillaService
             FechaVenta = venta.FechaVenta,
             Items = dto.Items
         };
+    }
+
+    private async Task ValidarDisponibilidadDulceriaAsync(List<RegistrarVentaItemDto> items)
+    {
+        var itemsDulceria = items
+            .Where(i => i.Tipo == "dulceria" || i.IdProducto.HasValue)
+            .ToList();
+
+        if (itemsDulceria.Count == 0) return;
+
+        var sf = await _db.InventarioStockFraccionados.FirstOrDefaultAsync();
+        var factor = sf?.FactorFraccion > 0 ? sf.FactorFraccion : FactorRebanadasPorPizza;
+        int rebanadasTotalesRequeridas = 0;
+
+        foreach (var item in itemsDulceria)
+        {
+            if (item.Cantidad <= 0)
+            {
+                throw new ArgumentException("La cantidad de cada artículo de dulcería debe ser mayor a cero.");
+            }
+
+            var producto = await BuscarEntidadProductoAsync(item);
+            if (producto == null) continue;
+
+            if (producto.StockActual <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"El artículo '{producto.Nombre}' no tiene inventario disponible (stock actual: 0).");
+            }
+
+            var esRebanada = (sf != null && producto.IdProducto == sf.IdProductoFraccion)
+                             || string.Equals(producto.CodigoBarras, SkuRebanadaPizza, StringComparison.OrdinalIgnoreCase);
+            var esPizzaCompleta = (sf != null && producto.IdProducto == sf.IdProductoMaestro)
+                                  || string.Equals(producto.CodigoBarras, SkuPizzaCompleta, StringComparison.OrdinalIgnoreCase);
+
+            if (esRebanada)
+            {
+                rebanadasTotalesRequeridas += item.Cantidad;
+            }
+            else if (esPizzaCompleta)
+            {
+                rebanadasTotalesRequeridas += item.Cantidad * factor;
+            }
+            else if (item.Cantidad > producto.StockActual)
+            {
+                throw new InvalidOperationException(
+                    $"Stock insuficiente para '{producto.Nombre}'. Solicitado: {item.Cantidad}, Disponible: {producto.StockActual}.");
+            }
+        }
+
+        if (rebanadasTotalesRequeridas > 0)
+        {
+            await ValidarRebanadasDisponiblesAsync(sf, factor, rebanadasTotalesRequeridas);
+        }
+    }
+
+    private async Task ValidarRebanadasDisponiblesAsync(InventarioStockFraccionado? sf, int factor, int rebanadasRequeridas)
+    {
+        int disponible;
+        if (sf != null)
+        {
+            disponible = sf.StockFraccionesActual;
+        }
+        else
+        {
+            var prodReb = await _db.Productos.FirstOrDefaultAsync(p => p.CodigoBarras == SkuRebanadaPizza);
+            var prodPiz = await _db.Productos.FirstOrDefaultAsync(p => p.CodigoBarras == SkuPizzaCompleta);
+            disponible = prodReb?.StockActual ?? ((prodPiz?.StockActual ?? 0) * factor);
+        }
+
+        if (rebanadasRequeridas > disponible)
+        {
+            throw new InvalidOperationException(
+                $"Stock fraccionado insuficiente de Pizzas. Requerido: {rebanadasRequeridas} rebanadas, Disponible: {disponible} rebanadas.");
+        }
+    }
+
+    private async Task<Producto?> BuscarEntidadProductoAsync(RegistrarVentaItemDto item)
+    {
+        if (item.IdProducto.HasValue && item.IdProducto.Value > 0)
+        {
+            return await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == item.IdProducto.Value);
+        }
+
+        return await _db.Productos.FirstOrDefaultAsync(p =>
+            p.CodigoBarras == item.Sku || p.Nombre == item.Nombre);
     }
 
     private async Task ValidarDisponibilidadAsientosAsync(List<RegistrarVentaItemDto> items)
@@ -872,10 +1398,7 @@ public class TaquillaService : ITaquillaService
 
     private async Task ProcesarItemDulceriaAsync(int idVenta, RegistrarVentaItemDto item)
     {
-        var producto = item.IdProducto.HasValue
-            ? await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == item.IdProducto.Value)
-            : await _db.Productos.FirstOrDefaultAsync(p => p.CodigoBarras == item.Sku || p.Nombre == item.Nombre);
-
+        var producto = await BuscarEntidadProductoAsync(item);
         if (producto == null) return;
 
         _db.DetalleVenta.Add(new DetalleVentum
@@ -885,7 +1408,67 @@ public class TaquillaService : ITaquillaService
             Cantidad = item.Cantidad
         });
 
+        var sf = await _db.InventarioStockFraccionados.FirstOrDefaultAsync(s =>
+            s.IdProductoFraccion == producto.IdProducto || s.IdProductoMaestro == producto.IdProducto);
+
+        var esRebanada = (sf != null && producto.IdProducto == sf.IdProductoFraccion)
+                         || string.Equals(producto.CodigoBarras, SkuRebanadaPizza, StringComparison.OrdinalIgnoreCase);
+        var esPizzaCompleta = (sf != null && producto.IdProducto == sf.IdProductoMaestro)
+                              || string.Equals(producto.CodigoBarras, SkuPizzaCompleta, StringComparison.OrdinalIgnoreCase);
+
+        if (esRebanada || esPizzaCompleta)
+        {
+            await DescontarStockFraccionadoAsync(producto, item.Cantidad, esPizzaCompleta, sf);
+            return;
+        }
+
         producto.StockActual = Math.Max(0, producto.StockActual - item.Cantidad);
+    }
+
+    private async Task DescontarStockFraccionadoAsync(
+        Producto productoVendido,
+        int cantidadVendida,
+        bool esPizzaCompleta,
+        InventarioStockFraccionado? sf)
+    {
+        var factor = sf?.FactorFraccion > 0 ? sf.FactorFraccion : FactorRebanadasPorPizza;
+        var rebanadasADescontar = esPizzaCompleta ? cantidadVendida * factor : cantidadVendida;
+
+        var prodRebanada = sf != null
+            ? await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == sf.IdProductoFraccion)
+            : await _db.Productos.FirstOrDefaultAsync(p => p.CodigoBarras == SkuRebanadaPizza);
+
+        var prodPizza = sf != null
+            ? await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == sf.IdProductoMaestro)
+            : await _db.Productos.FirstOrDefaultAsync(p => p.CodigoBarras == SkuPizzaCompleta);
+
+        int stockRebanadasActual = sf?.StockFraccionesActual
+                                   ?? prodRebanada?.StockActual
+                                   ?? ((prodPizza?.StockActual ?? 0) * factor);
+
+        int nuevoStockRebanadas = Math.Max(0, stockRebanadasActual - rebanadasADescontar);
+        int nuevoStockPizzas = nuevoStockRebanadas / factor;
+
+        if (sf != null)
+        {
+            sf.StockFraccionesActual = nuevoStockRebanadas;
+            sf.UltimaActualizacion = DateTime.Now;
+        }
+
+        if (prodRebanada != null)
+        {
+            prodRebanada.StockActual = nuevoStockRebanadas;
+        }
+
+        if (prodPizza != null)
+        {
+            prodPizza.StockActual = nuevoStockPizzas;
+        }
+
+        if (prodRebanada == null && prodPizza == null)
+        {
+            productoVendido.StockActual = esPizzaCompleta ? nuevoStockPizzas : nuevoStockRebanadas;
+        }
     }
 
     private async Task ProcesarItemBoletoAsync(int idVenta, RegistrarVentaItemDto item, Producto? productoBoleto)

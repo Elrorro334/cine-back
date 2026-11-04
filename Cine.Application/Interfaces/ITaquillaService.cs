@@ -13,6 +13,9 @@ namespace Cine.Application.Interfaces
         Task<List<PromocionDto>> ObtenerPromocionesAsync();
         Task<FuncionButacasDto> ObtenerButacasFuncionAsync(int idFuncion);
         Task<List<ProductoDto>> ObtenerProductosDulceriaAsync();
+        Task<CatalogoDulceriaPosDto> ObtenerCatalogoDulceriaPosAsync();
+        Task<ProductoDto?> BuscarProductoPorSkuAsync(string sku);
+        Task<ResumenOrdenCalculadoDto> CalcularOrdenPosAsync(CalcularOrdenRequestDto request);
         Task<VentaConfirmadaDto> RegistrarVentaAsync(RegistrarVentaDto dto);
         Task<PreordenDto?> ObtenerPreordenAsync(string codigoQr);
         Task<PreordenDto> CrearPreordenAsync(CrearPreordenDto dto);
