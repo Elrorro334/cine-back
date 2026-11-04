@@ -422,4 +422,111 @@ public class InventarioServiceTests
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*excede su precio de venta*");
     }
+
+    [Fact]
+    public async Task ObtenerInventarioMaestro_WithCategoryAndSearchFilters_FiltersCorrectly()
+    {
+        using var context = CreateInMemoryDbContext();
+        var service = new InventarioService(context);
+
+        var byCat = await service.ObtenerInventarioMaestroAsync("Snacks", "Palomitas");
+        byCat.Should().HaveCount(1);
+        byCat[0].Sku.Should().Be("7501001");
+
+        var noMatch = await service.ObtenerInventarioMaestroAsync("Snacks", "Inexistente999");
+        noMatch.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ObtenerInsumoPorId_WhenExistsAndWhenNotFound_BehavesCorrectly()
+    {
+        using var context = CreateInMemoryDbContext();
+        var service = new InventarioService(context);
+
+        var found = await service.ObtenerInsumoPorIdAsync(2);
+        found.Sku.Should().Be("7501001");
+
+        var act = async () => await service.ObtenerInsumoPorIdAsync(999);
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+    }
+
+    [Fact]
+    public async Task ActualizarPrecios_WhenProductNotFound_ThrowsKeyNotFoundException()
+    {
+        using var context = CreateInMemoryDbContext();
+        var service = new InventarioService(context);
+
+        var act = async () => await service.ActualizarPreciosAsync(999, new ActualizarPreciosDto { CostoUnitario = 10m, PrecioVenta = 20m });
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+    }
+
+    [Fact]
+    public async Task ObtenerHistorialYProveedores_ReturnsExpectedLists()
+    {
+        using var context = CreateInMemoryDbContext();
+        var service = new InventarioService(context);
+
+        await service.RegistrarEntradaMercanciaAsync(new RegistrarEntradaDto
+        {
+            IdProveedor = 1,
+            FolioFactura = "F-HIST-01",
+            TotalPagado = 100m,
+            Lineas = new List<RegistrarEntradaLineaDto>
+            {
+                new() { IdProducto = 2, Cantidad = 10, CostoUnitario = 10m }
+            }
+        });
+
+        var historial = await service.ObtenerHistorialEntradasAsync(10);
+        historial.Should().HaveCount(1);
+        historial[0].Factura.Should().Be("F-HIST-01");
+        historial[0].Lineas.Should().HaveCount(1);
+
+        var proveedores = await service.ObtenerProveedoresAsync();
+        proveedores.Should().NotBeEmpty();
+        proveedores[0].Nombre.Should().Be("Distribuidora Central de Dulces");
+    }
+
+    [Fact]
+    public async Task RegistrarEntradaMercancia_ValidationEdgeCases_ThrowsExpectedExceptions()
+    {
+        using var context = CreateInMemoryDbContext();
+        var service = new InventarioService(context);
+
+        var emptyLinesAct = async () => await service.RegistrarEntradaMercanciaAsync(new RegistrarEntradaDto
+        {
+            IdProveedor = 1,
+            FolioFactura = "F-1",
+            TotalPagado = 10m,
+            Lineas = new List<RegistrarEntradaLineaDto>()
+        });
+        await emptyLinesAct.Should().ThrowAsync<ArgumentException>();
+
+        var emptyFolioAct = async () => await service.RegistrarEntradaMercanciaAsync(new RegistrarEntradaDto
+        {
+            IdProveedor = 1,
+            FolioFactura = "   ",
+            TotalPagado = 10m,
+            Lineas = new List<RegistrarEntradaLineaDto> { new() { IdProducto = 2, Cantidad = 1, CostoUnitario = 10m } }
+        });
+        await emptyFolioAct.Should().ThrowAsync<ArgumentException>();
+
+        var missingProvAct = async () => await service.RegistrarEntradaMercanciaAsync(new RegistrarEntradaDto
+        {
+            IdProveedor = 999,
+            FolioFactura = "F-2",
+            TotalPagado = 10m,
+            Lineas = new List<RegistrarEntradaLineaDto> { new() { IdProducto = 2, Cantidad = 1, CostoUnitario = 10m } }
+        });
+        await missingProvAct.Should().ThrowAsync<KeyNotFoundException>();
+
+        var missingProdAct = async () => await service.RegistrarEntradaMercanciaAsync(new RegistrarEntradaDto
+        {
+            IdProveedor = 1,
+            FolioFactura = "F-3",
+            TotalPagado = 10m,
+            Lineas = new List<RegistrarEntradaLineaDto> { new() { IdProducto = 999, Cantidad = 1, CostoUnitario = 10m } }
+        });
+        await missingProdAct.Should().ThrowAsync<KeyNotFoundException>();
+    }
 }
