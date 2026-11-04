@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using Cine.Application.Dtos;
 using Cine.Infrastructure.Persistence;
@@ -20,7 +21,7 @@ namespace cine_back.Tests.Integration;
 
 public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 {
-    private const string TestJwtKey = "ClaveDePruebaParaEntornoDeIntegracionContinuaEnGitHubActions123456";
+    private static readonly string RuntimeTestJwtKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(48));
     private const string TestIssuer = "CineTeatroXilotzinApi";
     private const string TestAudience = "CineTeatroXilotzinPWA";
 
@@ -36,7 +37,7 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
             {
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
-                    { "Jwt:Key", TestJwtKey },
+                    { "Jwt:Key", RuntimeTestJwtKey },
                     { "Jwt:Issuer", TestIssuer },
                     { "Jwt:Audience", TestAudience }
                 });
@@ -66,9 +67,14 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
         });
     }
 
-    private static string GenerarJwtValido()
+    private string GenerarJwtValido()
     {
-        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestJwtKey));
+        var config = _factory.Services.GetRequiredService<IConfiguration>();
+        var key = config["Jwt:Key"] ?? RuntimeTestJwtKey;
+        var issuer = config["Jwt:Issuer"] ?? TestIssuer;
+        var audience = config["Jwt:Audience"] ?? TestAudience;
+
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key));
         var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
@@ -79,8 +85,8 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
         };
 
         var token = new JwtSecurityToken(
-            issuer: TestIssuer,
-            audience: TestAudience,
+            issuer: issuer,
+            audience: audience,
             claims: claims,
             expires: DateTime.UtcNow.AddHours(1),
             signingCredentials: credentials);
