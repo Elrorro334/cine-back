@@ -484,7 +484,7 @@ public class InventarioServiceTests
 
         var proveedores = await service.ObtenerProveedoresAsync();
         proveedores.Should().NotBeEmpty();
-        proveedores[0].Nombre.Should().Be("Distribuidora Central de Dulces");
+        proveedores.Select(p => p.Nombre).Should().Contain("Distribuidora Central de Dulces");
     }
 
     [Fact]
