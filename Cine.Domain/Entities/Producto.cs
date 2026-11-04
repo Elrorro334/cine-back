@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 namespace Cine.Domain.Entities
 {
@@ -28,5 +28,9 @@ namespace Cine.Domain.Entities
         public virtual ICollection<EntradaMercancium> EntradaMercancia { get; set; } = new List<EntradaMercancium>();
 
         public virtual Categorium IdCategoriaNavigation { get; set; } = null!;
+
+        public virtual ICollection<InventarioStockFraccionado> StockFraccionadoComoMaestro { get; set; } = new List<InventarioStockFraccionado>();
+
+        public virtual ICollection<InventarioStockFraccionado> StockFraccionadoComoFraccion { get; set; } = new List<InventarioStockFraccionado>();
     }
 }

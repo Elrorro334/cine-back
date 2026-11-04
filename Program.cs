@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using System.Reflection;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -72,6 +73,13 @@ builder.Services.AddSwaggerGen(c =>
             Array.Empty<string>()
         }
     });
+
+    var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+    {
+        c.IncludeXmlComments(xmlPath);
+    }
 });
 
 // Middleware para detectar IP real del cliente (HU-04)
@@ -84,17 +92,17 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 var app = builder.Build();
 
-// Siembra idempotente de butacas (HU-06). Si la BD no está disponible,
-// la API arranca igual y el error queda registrado para diagnóstico.
+// Siembra idempotente de butacas (HU-06) y catálogo de dulcería/stock fraccionado (HU-07).
 try
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<CineDbContext>();
     await DbSeeder.SeedButacasAsync(db);
+    await DbSeeder.SeedDulceriaAsync(db);
 }
 catch (Exception ex)
 {
-    app.Logger.LogWarning(ex, "No se pudieron sembrar las butacas iniciales.");
+    app.Logger.LogWarning(ex, "No se pudieron sembrar los datos base iniciales de taquilla/dulcería.");
 }
 
 if (app.Environment.IsDevelopment())

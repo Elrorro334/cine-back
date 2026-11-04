@@ -19,6 +19,7 @@ public interface ICineDbContext
     DbSet<Producto> Productos { get; set; }
     DbSet<Categorium> Categoria { get; set; }
     DbSet<DetallePreordenDulcerium> DetallePreordenDulceria { get; set; }
+    DbSet<InventarioStockFraccionado> InventarioStockFraccionados { get; set; }
     DbSet<Rol> Rols { get; set; }
     DbSet<Cliente> Clientes { get; set; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

@@ -1013,6 +1013,339 @@ public class TaquillaServiceTests
         secondCall.Should().BeSameAs(firstCall);
     }
 
+    // =========================================================================
+    // Pruebas Unitarias HU-07: POS Dulcería, Lector de Código de Barras y Stock Fraccionado
+    // =========================================================================
+
+    [Fact]
+    public async Task SeedDulceriaAsync_SeedsCategoriesProductsAndFractionalInventoryIdempotently()
+    {
+        using var context = GetInMemoryDbContext();
+
+        await DbSeeder.SeedDulceriaAsync(context);
+        // Segunda ejecución para validar idempotencia
+        await DbSeeder.SeedDulceriaAsync(context);
+
+        var categorias = await context.Categoria.ToListAsync();
+        categorias.Should().Contain(c => c.Nombre == "Snacks");
+        categorias.Should().Contain(c => c.Nombre == "Bebidas");
+        categorias.Should().Contain(c => c.Nombre == "Pizzas");
+
+        var palomitas = await context.Productos.FirstOrDefaultAsync(p => p.CodigoBarras == "7501001");
+        palomitas.Should().NotBeNull();
+        palomitas!.Nombre.Should().Be("Palomitas Grandes");
+        palomitas.PrecioVenta.Should().Be(50.00m);
+
+        var stockFraccionado = await context.InventarioStockFraccionados.FirstOrDefaultAsync();
+        stockFraccionado.Should().NotBeNull();
+        stockFraccionado!.FactorFraccion.Should().Be(8);
+        stockFraccionado.StockFraccionesActual.Should().Be(56);
+    }
+
+    [Fact]
+    public async Task ObtenerCatalogoDulceriaPosAsync_ReturnsSnacksBebidasAndStockFraccionadoMonitor()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+
+        var service = new TaquillaService(context);
+        var catalogo = await service.ObtenerCatalogoDulceriaPosAsync();
+
+        catalogo.Should().NotBeNull();
+        catalogo.StockFraccionado.Should().NotBeNull();
+        catalogo.StockFraccionado!.StockRebanadasActual.Should().Be(56);
+        catalogo.StockFraccionado.PizzasCompletasEquivalentes.Should().Be(7);
+        catalogo.StockFraccionado.EtiquetaMonitor.Should().Be("Stock: 56 rebanadas (7 pizzas)");
+        catalogo.StockFraccionado.ProductoRebanada.Should().NotBeNull();
+        catalogo.StockFraccionado.ProductoRebanada!.Precio.Should().Be(35.00m);
+        catalogo.StockFraccionado.ProductoPizzaCompleta.Should().NotBeNull();
+        catalogo.StockFraccionado.ProductoPizzaCompleta!.Precio.Should().Be(180.00m);
+
+        catalogo.SnacksYBebidas.Should().HaveCount(5);
+        catalogo.SnacksYBebidas.Should().Contain(p => p.Sku == "7501001" && p.Nombre == "Palomitas Grandes");
+        catalogo.SnacksYBebidas.Should().Contain(p => p.Sku == "7501003" && p.Nombre == "Nachos con Queso");
+    }
+
+    [Fact]
+    public async Task BuscarProductoPorSkuAsync_WhenValidBarcodeScanned_ReturnsProducto()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        var prod = await service.BuscarProductoPorSkuAsync("7501001");
+
+        prod.Should().NotBeNull();
+        prod!.Sku.Should().Be("7501001");
+        prod.Nombre.Should().Be("Palomitas Grandes");
+        prod.Precio.Should().Be(50.00m);
+    }
+
+    [Fact]
+    public async Task BuscarProductoPorSkuAsync_WhenInvalidOrNotFoundOrZeroStock_HandlesCorrectly()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+
+        var agotado = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501004");
+        agotado.StockActual = 0;
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+
+        Func<Task> emptyAct = async () => await service.BuscarProductoPorSkuAsync("   ");
+        await emptyAct.Should().ThrowAsync<ArgumentException>();
+
+        var noExiste = await service.BuscarProductoPorSkuAsync("9999999");
+        noExiste.Should().BeNull();
+
+        Func<Task> zeroStockAct = async () => await service.BuscarProductoPorSkuAsync("7501004");
+        await zeroStockAct.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*inventario 0*");
+    }
+
+    [Fact]
+    public async Task CalcularOrdenPosAsync_InheritsBoletosAndAddsScannedSkuAndFractionalSlice()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        // Paso 1 heredado (HU-06): 1 boleto de $50.00 + Criterio 1 (HU-07): Escaneo de SKU 7501001 ($50.00)
+        var req1 = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "boleto",
+                    IdFuncion = 10,
+                    Sku = "BOL-GEN",
+                    Nombre = "Terrifier 3: Payaso Siniestro (12:30)",
+                    Cantidad = 1,
+                    Precio = 50.00m,
+                    Asientos = new List<string> { "C1" }
+                }
+            },
+            SkuAgregar = "7501001",
+            CantidadAgregar = 1
+        };
+
+        var res1 = await service.CalcularOrdenPosAsync(req1);
+
+        res1.SubtotalBoletos.Should().Be(50.00m);
+        res1.SubtotalDulceria.Should().Be(50.00m);
+        res1.TotalVenta.Should().Be(100.00m);
+        res1.TotalArticulos.Should().Be(2);
+        res1.ProductoAgregado.Should().NotBeNull();
+        res1.ProductoAgregado!.Nombre.Should().Be("Palomitas Grandes");
+
+        // Criterio 3 (HU-07): Seleccionar "Rebanada Individual" (SKU 7501006, $35.00) descuenta 1 rebanada de 56 -> 55
+        var req2 = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = res1.Items.Select(i => new RegistrarVentaItemDto
+            {
+                IdProducto = i.IdProducto,
+                IdFuncion = i.IdFuncion,
+                Sku = i.Sku,
+                Nombre = i.Nombre,
+                Tipo = i.Tipo,
+                Cantidad = i.Cantidad,
+                Precio = i.PrecioUnitario,
+                Asientos = i.Asientos
+            }).ToList(),
+            SkuAgregar = "7501006",
+            CantidadAgregar = 1
+        };
+
+        var res2 = await service.CalcularOrdenPosAsync(req2);
+
+        res2.TotalVenta.Should().Be(135.00m); // 50 + 50 + 35
+        res2.StockFraccionado.Should().NotBeNull();
+        res2.StockFraccionado!.StockRebanadasActual.Should().Be(55);
+        res2.StockFraccionado.PizzasCompletasEquivalentes.Should().Be(6);
+        res2.StockFraccionado.EtiquetaMonitor.Should().Be("Stock: 55 rebanadas (6 pizzas)");
+    }
+
+    [Fact]
+    public async Task CalcularOrdenPosAsync_WhenAddingWholePizza_DeductsEightSlicesProportional()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        var req = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = new List<RegistrarVentaItemDto>(),
+            SkuAgregar = "7501007", // Pizza Completa (8 Rebanadas)
+            CantidadAgregar = 1
+        };
+
+        var res = await service.CalcularOrdenPosAsync(req);
+
+        res.TotalVenta.Should().Be(180.00m);
+        res.StockFraccionado.Should().NotBeNull();
+        res.StockFraccionado!.StockRebanadasActual.Should().Be(48); // 56 - 8 = 48
+        res.StockFraccionado.PizzasCompletasEquivalentes.Should().Be(6); // 48 / 8 = 6
+        res.StockFraccionado.EtiquetaMonitor.Should().Be("Stock: 48 rebanadas (6 pizzas)");
+    }
+
+    [Fact]
+    public async Task CalcularOrdenPosAsync_WhenFractionalOrNormalStockExceeded_ThrowsInvalidOperationException()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        // Intentar pedir 8 pizzas completas (64 rebanadas) cuando solo hay 56 rebanadas (7 pizzas)
+        var reqExcesoPizza = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = new List<RegistrarVentaItemDto>(),
+            SkuAgregar = "7501007",
+            CantidadAgregar = 8
+        };
+
+        Func<Task> actPizza = async () => await service.CalcularOrdenPosAsync(reqExcesoPizza);
+        await actPizza.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Stock fraccionado insuficiente*");
+
+        // Producto con stock 0 impide agregarse (Regla de Negocio 1)
+        var nachos = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501003");
+        nachos.StockActual = 0;
+        await context.SaveChangesAsync();
+
+        var reqCeroStock = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = new List<RegistrarVentaItemDto>(),
+            SkuAgregar = "7501003",
+            CantidadAgregar = 1
+        };
+
+        Func<Task> actCero = async () => await service.CalcularOrdenPosAsync(reqCeroStock);
+        await actCero.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*inventario actual 0*");
+    }
+
+    [Fact]
+    public async Task RegistrarVentaAsync_WithFractionalPizzaItems_UpdatesMasterAndSliceStockProportionally()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        // Vender 1 Rebanada Individual (descuenta 1 rebanada -> de 56 baja a 55)
+        var ventaRebanada = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    Sku = "7501006",
+                    Nombre = "Rebanada Individual",
+                    Cantidad = 1,
+                    Precio = 35.00m
+                }
+            }
+        };
+
+        await service.RegistrarVentaAsync(ventaRebanada);
+
+        var sfDespues1 = await context.InventarioStockFraccionados.FirstAsync();
+        sfDespues1.StockFraccionesActual.Should().Be(55);
+
+        var prodRebanada = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501006");
+        var prodPizza = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501007");
+        prodRebanada.StockActual.Should().Be(55);
+        prodPizza.StockActual.Should().Be(6); // 55 / 8 = 6 pizzas completas disponibles
+
+        // Vender 7 rebanadas adicionales (total 8 rebanadas descontadas = 1 pizza completa menos -> 48 rebanadas = 6 pizzas)
+        var venta7Rebanadas = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    Sku = "7501006",
+                    Nombre = "Rebanada Individual",
+                    Cantidad = 7,
+                    Precio = 35.00m
+                }
+            }
+        };
+
+        await service.RegistrarVentaAsync(venta7Rebanadas);
+
+        var sfDespues8 = await context.InventarioStockFraccionados.FirstAsync();
+        sfDespues8.StockFraccionesActual.Should().Be(48);
+        prodRebanada.StockActual.Should().Be(48);
+        prodPizza.StockActual.Should().Be(6);
+
+        // Vender 1 Pizza Completa (descuenta 8 rebanadas -> 40 rebanadas = 5 pizzas)
+        var ventaPizzaCompleta = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    Sku = "7501007",
+                    Nombre = "Pizza Completa (8 Rebanadas)",
+                    Cantidad = 1,
+                    Precio = 180.00m
+                }
+            }
+        };
+
+        await service.RegistrarVentaAsync(ventaPizzaCompleta);
+
+        var sfFinal = await context.InventarioStockFraccionados.FirstAsync();
+        sfFinal.StockFraccionesActual.Should().Be(40);
+        prodRebanada.StockActual.Should().Be(40);
+        prodPizza.StockActual.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task RegistrarVentaAsync_WhenProductStockIsZero_ThrowsInvalidOperationException()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+
+        var prod = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501001");
+        prod.StockActual = 0;
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+        var dto = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    IdProducto = prod.IdProducto,
+                    Sku = "7501001",
+                    Nombre = "Palomitas Grandes",
+                    Cantidad = 1,
+                    Precio = 50.00m
+                }
+            }
+        };
+
+        Func<Task> act = async () => await service.RegistrarVentaAsync(dto);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*stock actual: 0*");
+    }
+
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler;

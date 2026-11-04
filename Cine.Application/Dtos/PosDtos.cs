@@ -29,6 +29,9 @@ public class ProductoDto
     public decimal Precio { get; set; }
     public int Stock { get; set; }
     public string? Img { get; set; }
+    public bool EsFraccionado { get; set; }
+    public int FactorFraccion { get; set; } = 1;
+    public string? DescripcionDescuento { get; set; }
 }
 
 public class RegistrarVentaItemDto
