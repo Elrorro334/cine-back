@@ -145,22 +145,12 @@ public class InventarioService : IInventarioService
 
     public async Task<EntradaHistorialDto> RegistrarEntradaMercanciaAsync(RegistrarEntradaDto dto, int? idVendedor = null)
     {
-        if (dto == null) throw new ArgumentNullException(nameof(dto));
-        if (dto.Lineas == null || dto.Lineas.Count == 0)
-        {
-            throw new ArgumentException("Debe capturar al menos un insumo en la factura.");
-        }
+        var folioNormalizado = ValidarSolicitudEntrada(dto);
 
         var proveedor = await _context.Proveedores.FindAsync(dto.IdProveedor);
         if (proveedor == null || !proveedor.Activo)
         {
             throw new KeyNotFoundException($"Proveedor con ID {dto.IdProveedor} no existe o no está activo.");
-        }
-
-        var folioNormalizado = dto.FolioFactura?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(folioNormalizado))
-        {
-            throw new ArgumentException("El folio de factura no puede estar vacío.");
         }
 
         // Validar unicidad de folio por proveedor
@@ -173,34 +163,12 @@ public class InventarioService : IInventarioService
                 $"La factura con folio '{folioNormalizado}' ya fue registrada previamente para el proveedor '{proveedor.Nombre}'.");
         }
 
-        // Validar concordancia de total pagado con la suma de líneas
-        var sumaLineas = dto.Lineas.Sum(l => l.Cantidad * l.CostoUnitario);
-        if (Math.Abs(dto.TotalPagado - sumaLineas) > 0.01m)
-        {
-            throw new InvalidOperationException(
-                $"El total pagado (${dto.TotalPagado:F2}) no coincide con la suma calculada de las líneas (${sumaLineas:F2}).");
-        }
-
         var productIds = dto.Lineas.Select(l => l.IdProducto).Distinct().ToList();
         var productos = await _context.Productos
             .Where(p => productIds.Contains(p.IdProducto))
             .ToDictionaryAsync(p => p.IdProducto);
 
-        // Pre-validar existencia y regla de margen negativo para todos los productos de la factura
-        foreach (var linea in dto.Lineas)
-        {
-            if (!productos.TryGetValue(linea.IdProducto, out var prod))
-            {
-                throw new KeyNotFoundException($"Insumo con ID {linea.IdProducto} no encontrado en el catálogo maestro.");
-            }
-
-            // Regla 2: Protección de margen negativo ante nuevo costo unitario
-            if (prod.PrecioVenta < linea.CostoUnitario)
-            {
-                throw new InvalidOperationException(
-                    $"El nuevo costo unitario (${linea.CostoUnitario:F2}) de '{prod.Nombre}' excede su precio de venta actual (${prod.PrecioVenta:F2}). Actualice el precio de venta antes de ingresar esta factura para evitar margen negativo.");
-            }
-        }
+        ValidarLineasFactura(dto.Lineas, productos);
 
         var factura = new FacturaProveedor
         {
@@ -213,35 +181,7 @@ public class InventarioService : IInventarioService
 
         _context.FacturasProveedor.Add(factura);
 
-        var entradasList = new List<EntradaMercancium>();
-
-        foreach (var linea in dto.Lineas)
-        {
-            var prod = productos[linea.IdProducto];
-            var factor = prod.FactorEquivalencia > 0 ? prod.FactorEquivalencia : 1;
-
-            // Regla 1: Multiplicación por factor de equivalencia (stock fraccionado)
-            var stockAgregado = linea.Cantidad * factor;
-            prod.StockActual += stockAgregado;
-
-            // Actualización de último costo unitario
-            prod.Costo = linea.CostoUnitario;
-
-            var entrada = new EntradaMercancium
-            {
-                IdProducto = prod.IdProducto,
-                FolioFactura = folioNormalizado,
-                Cantidad = linea.Cantidad,
-                CostoUnitario = linea.CostoUnitario,
-                CostoTotal = linea.Cantidad * linea.CostoUnitario,
-                CantidadStockAgregada = stockAgregado,
-                FechaEntrada = DateTime.UtcNow,
-                IdFacturaNavigation = factura
-            };
-
-            entradasList.Add(entrada);
-            _context.EntradaMercancia.Add(entrada);
-        }
+        var entradasList = CrearEntradasYActualizarStock(dto.Lineas, productos, folioNormalizado, factura);
 
         await _context.SaveChangesAsync();
 
@@ -265,6 +205,86 @@ public class InventarioService : IInventarioService
                 CostoTotal = e.CostoTotal
             }).ToList()
         };
+    }
+
+    private static string ValidarSolicitudEntrada(RegistrarEntradaDto dto)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        if (dto.Lineas == null || dto.Lineas.Count == 0)
+        {
+            throw new ArgumentException("Debe capturar al menos un insumo en la factura.");
+        }
+
+        var folioNormalizado = dto.FolioFactura?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(folioNormalizado))
+        {
+            throw new ArgumentException("El folio de factura no puede estar vacío.");
+        }
+
+        var sumaLineas = dto.Lineas.Sum(l => l.Cantidad * l.CostoUnitario);
+        if (Math.Abs(dto.TotalPagado - sumaLineas) > 0.01m)
+        {
+            throw new InvalidOperationException(
+                $"El total pagado (${dto.TotalPagado:F2}) no coincide con la suma calculada de las líneas (${sumaLineas:F2}).");
+        }
+
+        return folioNormalizado;
+    }
+
+    private static void ValidarLineasFactura(
+        List<RegistrarEntradaLineaDto> lineas,
+        Dictionary<int, Producto> productos)
+    {
+        foreach (var linea in lineas)
+        {
+            if (!productos.TryGetValue(linea.IdProducto, out var prod))
+            {
+                throw new KeyNotFoundException($"Insumo con ID {linea.IdProducto} no encontrado en el catálogo maestro.");
+            }
+
+            if (prod.PrecioVenta < linea.CostoUnitario)
+            {
+                throw new InvalidOperationException(
+                    $"El nuevo costo unitario (${linea.CostoUnitario:F2}) de '{prod.Nombre}' excede su precio de venta actual (${prod.PrecioVenta:F2}). Actualice el precio de venta antes de ingresar esta factura para evitar margen negativo.");
+            }
+        }
+    }
+
+    private List<EntradaMercancium> CrearEntradasYActualizarStock(
+        List<RegistrarEntradaLineaDto> lineas,
+        Dictionary<int, Producto> productos,
+        string folioNormalizado,
+        FacturaProveedor factura)
+    {
+        var entradasList = new List<EntradaMercancium>();
+
+        foreach (var linea in lineas)
+        {
+            var prod = productos[linea.IdProducto];
+            var factor = prod.FactorEquivalencia > 0 ? prod.FactorEquivalencia : 1;
+            var stockAgregado = linea.Cantidad * factor;
+
+            prod.StockActual += stockAgregado;
+            prod.Costo = linea.CostoUnitario;
+
+            var entrada = new EntradaMercancium
+            {
+                IdProducto = prod.IdProducto,
+                FolioFactura = folioNormalizado,
+                Cantidad = linea.Cantidad,
+                CostoUnitario = linea.CostoUnitario,
+                CostoTotal = linea.Cantidad * linea.CostoUnitario,
+                CantidadStockAgregada = stockAgregado,
+                FechaEntrada = DateTime.UtcNow,
+                IdFacturaNavigation = factura
+            };
+
+            entradasList.Add(entrada);
+            _context.EntradaMercancia.Add(entrada);
+        }
+
+        return entradasList;
     }
 
     public async Task<List<ProveedorDto>> ObtenerProveedoresAsync()

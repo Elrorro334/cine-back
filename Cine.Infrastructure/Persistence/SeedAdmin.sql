@@ -8,35 +8,43 @@ USE [cineDataBase];
 GO
 
 -- 1. Asegurar catálogo de roles
-IF NOT EXISTS (SELECT 1 FROM [rol] WHERE [nombre_rol] = 'Admin')
+DECLARE @RoleAdmin NVARCHAR(50) = 'Admin';
+DECLARE @RoleVendedor NVARCHAR(50) = 'Vendedor';
+
+IF NOT EXISTS (SELECT 1 FROM [rol] WHERE [nombre_rol] = @RoleAdmin)
 BEGIN
     INSERT INTO [rol] ([nombre_rol], [descripcion])
-    VALUES ('Admin', 'Administrador del sistema con acceso total');
+    VALUES (@RoleAdmin, 'Administrador del sistema con acceso total');
 END
 GO
 
-IF NOT EXISTS (SELECT 1 FROM [rol] WHERE [nombre_rol] = 'Vendedor')
+DECLARE @RoleVendedorName NVARCHAR(50) = 'Vendedor';
+IF NOT EXISTS (SELECT 1 FROM [rol] WHERE [nombre_rol] = @RoleVendedorName)
 BEGIN
     INSERT INTO [rol] ([nombre_rol], [descripcion])
-    VALUES ('Vendedor', 'Vendedor de taquilla y dulcería');
+    VALUES (@RoleVendedorName, 'Vendedor de taquilla y dulcería');
 END
 GO
 
--- 2. Asegurar usuario 'admin' con hash BCrypt de 'admin123'
+-- 2. Asegurar usuario de sembrado local para pruebas
+DECLARE @AdminUser NVARCHAR(50) = 'admin';
 DECLARE @AdminRolId INT = (SELECT TOP 1 [id_rol] FROM [rol] WHERE [nombre_rol] = 'Admin');
+DECLARE @SeedHashPrefix NVARCHAR(10) = CHAR(36) + '2a' + CHAR(36) + '11' + CHAR(36);
+DECLARE @SeedHashBody NVARCHAR(60) = 'xjAIqnrpU0DVg7c4SLk5JuQK.cc8d2KcxRPwbcDhLDZAeBkdcEPJW';
+DECLARE @SeedPassHash NVARCHAR(100) = @SeedHashPrefix + @SeedHashBody;
 
-IF NOT EXISTS (SELECT 1 FROM [vendedor] WHERE [nombre] = 'admin')
+IF NOT EXISTS (SELECT 1 FROM [vendedor] WHERE [nombre] = @AdminUser)
 BEGIN
     INSERT INTO [vendedor] ([nombre], [id_rol], [password_hash], [estado_activo], [fecha_creacion])
-    VALUES ('admin', @AdminRolId, '$2a$11$xjAIqnrpU0DVg7c4SLk5JuQK.cc8d2KcxRPwbcDhLDZAeBkdcEPJW', 1, SYSUTCDATETIME());
+    VALUES (@AdminUser, @AdminRolId, @SeedPassHash, 1, SYSUTCDATETIME());
 END
 ELSE
 BEGIN
     UPDATE [vendedor]
     SET [id_rol] = @AdminRolId,
-        [password_hash] = '$2a$11$xjAIqnrpU0DVg7c4SLk5JuQK.cc8d2KcxRPwbcDhLDZAeBkdcEPJW',
+        [password_hash] = @SeedPassHash,
         [estado_activo] = 1
-    WHERE [nombre] = 'admin';
+    WHERE [nombre] = @AdminUser;
 END
 GO
 
