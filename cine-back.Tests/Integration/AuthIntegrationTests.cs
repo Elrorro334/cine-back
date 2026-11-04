@@ -20,7 +20,7 @@ namespace cine_back.Tests.Integration;
 
 public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 {
-    private const string TestJwtKey = "ClaveSinteticaMuyLargaYSeguraParaTestExplorerLocal1234567890";
+    private const string TestJwtKey = "ClaveDePruebaParaEntornoDeIntegracionContinuaEnGitHubActions123456";
     private const string TestIssuer = "CineTeatroXilotzinApi";
     private const string TestAudience = "CineTeatroXilotzinPWA";
 

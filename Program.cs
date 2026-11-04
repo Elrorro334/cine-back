@@ -26,16 +26,15 @@ builder.Services.AddCors(options =>
 });
 
 // Configuración de JWT
-var jwtKey = builder.Configuration["Jwt:Key"];
-if (string.IsNullOrWhiteSpace(jwtKey))
-{
-    jwtKey = "SuperSecretKeyParaEntornoLocalDeDesarrolloMinimo32Caracteres12345!";
-    builder.Configuration["Jwt:Key"] = jwtKey;
-}
-
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        var jwtKey = builder.Configuration["Jwt:Key"];
+        if (string.IsNullOrWhiteSpace(jwtKey))
+        {
+            jwtKey = "ClaveDePruebaParaEntornoDeIntegracionContinuaEnGitHubActions123456";
+        }
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -99,16 +98,11 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 var app = builder.Build();
 
-// Siembra idempotente de acceso local, butacas (HU-06) y catálogo de dulcería/stock fraccionado (HU-07).
+// Siembra idempotente de butacas (HU-06) y catálogo de dulcería/stock fraccionado (HU-07).
 try
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<CineDbContext>();
-    if (db.Database.IsRelational())
-    {
-        await db.Database.MigrateAsync();
-    }
-    await DbSeeder.SeedAccesoLocalAsync(db);
     await DbSeeder.SeedButacasAsync(db);
     await DbSeeder.SeedDulceriaAsync(db);
 }

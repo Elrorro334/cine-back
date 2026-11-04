@@ -1,5 +1,4 @@
-using System.Net;
-using System.Net.Sockets;
+using System.Diagnostics.CodeAnalysis;
 using Cine.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,6 +8,7 @@ namespace Cine.Infrastructure.Persistence;
 /// Datos base requeridos por la operación de taquilla y dulcería POS (HU-06 / HU-07).
 /// La siembra es idempotente: solo agrega registros faltantes sin sobrescribir ventas previas.
 /// </summary>
+[ExcludeFromCodeCoverage]
 public static class DbSeeder
 {
     // Distribución física del mapa de butacas (Mockup 11 / HU-06).
@@ -38,168 +38,8 @@ public static class DbSeeder
         ("7501007", "Pizza Completa (8 Rebanadas)", "Pizzas", 180.00m, 85.00m, 7, 1)
     };
 
-    /// <summary>
-    /// Autoriza la IP local de desarrollo en RedesAutorizadas y crea los usuarios iniciales
-    /// (admin / admin123 y Raul / 123) si no existen aún en la base de datos.
-    /// </summary>
-    public static async Task SeedAccesoLocalAsync(CineDbContext db)
-    {
-        var ipsLocales = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "127.0.0.1",
-            "::1"
-        };
-
-        try
-        {
-            var host = Dns.GetHostEntry(Dns.GetHostName());
-            foreach (var ip in host.AddressList)
-            {
-                if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
-                {
-                    ipsLocales.Add(ip.ToString());
-                }
-            }
-        }
-        catch
-        {
-            // Ignorar si no se puede resolver DNS local
-        }
-
-        var redesExistentes = await db.RedesAutorizadas
-            .Select(r => r.DireccionIp)
-            .ToListAsync();
-
-        foreach (var ip in ipsLocales)
-        {
-            if (!redesExistentes.Contains(ip, StringComparer.OrdinalIgnoreCase))
-            {
-                db.RedesAutorizadas.Add(new RedesAutorizada { DireccionIp = ip });
-            }
-        }
-
-        await db.SaveChangesAsync();
-
-        var rolesExistentes = await db.Rols.ToListAsync();
-        var rolAdmin = rolesExistentes.FirstOrDefault(r => string.Equals(r.NombreRol, "Admin", StringComparison.OrdinalIgnoreCase));
-        if (rolAdmin == null)
-        {
-            rolAdmin = new Rol { NombreRol = "Admin", Descripcion = "Administrador del sistema" };
-            db.Rols.Add(rolAdmin);
-        }
-
-        var rolVendedor = rolesExistentes.FirstOrDefault(r => string.Equals(r.NombreRol, "Vendedor", StringComparison.OrdinalIgnoreCase));
-        if (rolVendedor == null)
-        {
-            rolVendedor = new Rol { NombreRol = "Vendedor", Descripcion = "Cajero de taquilla y dulcería POS" };
-            db.Rols.Add(rolVendedor);
-        }
-
-        await db.SaveChangesAsync();
-
-        var vendedoresExistentes = await db.Vendedors.ToListAsync();
-        if (!vendedoresExistentes.Any(v => string.Equals(v.Nombre, "Raul", StringComparison.OrdinalIgnoreCase)))
-        {
-            db.Vendedors.Add(new Vendedor
-            {
-                Nombre = "Raul",
-                IdRol = rolVendedor.IdRol,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("123"),
-                EstadoActivo = true,
-                FechaCreacion = DateTime.Now
-            });
-        }
-
-        if (!vendedoresExistentes.Any(v => string.Equals(v.Nombre, "admin", StringComparison.OrdinalIgnoreCase)))
-        {
-            db.Vendedors.Add(new Vendedor
-            {
-                Nombre = "admin",
-                IdRol = rolAdmin.IdRol,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin123"),
-                EstadoActivo = true,
-                FechaCreacion = DateTime.Now
-            });
-        }
-
-        await db.SaveChangesAsync();
-
-        // Si no hay funciones programadas para el día de hoy, programar cartelera activa para hoy
-        var hoy = DateTime.Today;
-        if (!await db.Funcions.AnyAsync(f => f.FechaFuncion.Date == hoy))
-        {
-            var salaPrincipal = await db.Salas.FirstOrDefaultAsync();
-            if (salaPrincipal == null)
-            {
-                salaPrincipal = new Sala
-                {
-                    NombreSala = "Sala 1 - Principal",
-                    CapacidadTotal = 48,
-                    TipoPantalla = "2D Tradicional"
-                };
-                db.Salas.Add(salaPrincipal);
-                await db.SaveChangesAsync();
-            }
-
-            var peliculas = await db.Peliculas.ToListAsync();
-            if (peliculas.Count == 0)
-            {
-                var peli1 = new Pelicula
-                {
-                    Titulo = "Spider-Man: Un Nuevo Día",
-                    Sinopsis = "Nueva entrega en pantalla gigante en Cine Teatro Xilotzin.",
-                    Duracion = 125,
-                    Clasificacion = "B",
-                    Director = "Sam Raimi",
-                    PosterImage = "https://images.unsplash.com/photo-1635805737707-575885ab0820?q=80&w=600"
-                };
-                var peli2 = new Pelicula
-                {
-                    Titulo = "Super Mario Bros: La Película",
-                    Sinopsis = "Aventura animada para toda la familia en Cine Teatro Xilotzin.",
-                    Duracion = 95,
-                    Clasificacion = "AA",
-                    Director = "Aaron Horvath",
-                    PosterImage = "https://images.unsplash.com/photo-1563089145-599997674d42?q=80&w=600"
-                };
-                db.Peliculas.AddRange(peli1, peli2);
-                await db.SaveChangesAsync();
-                peliculas = await db.Peliculas.ToListAsync();
-            }
-
-            var horariosBase = new[] { new TimeSpan(15, 0, 0), new TimeSpan(18, 0, 0), new TimeSpan(20, 30, 0) };
-            foreach (var peli in peliculas.Take(4))
-            {
-                foreach (var h in horariosBase)
-                {
-                    db.Funcions.Add(new Funcion
-                    {
-                        IdPelicula = peli.IdPelicula,
-                        IdSala = salaPrincipal.IdSala,
-                        FechaFuncion = hoy,
-                        HoraInicio = hoy.Add(h),
-                        Precio = 50.00m
-                    });
-                }
-            }
-
-            await db.SaveChangesAsync();
-        }
-    }
-
     public static async Task SeedButacasAsync(CineDbContext db)
     {
-        if (!await db.Salas.AnyAsync())
-        {
-            db.Salas.Add(new Sala
-            {
-                NombreSala = "Sala 1 - Principal",
-                CapacidadTotal = 48,
-                TipoPantalla = "2D Tradicional"
-            });
-            await db.SaveChangesAsync();
-        }
-
         var salas = (await db.Salas.ToListAsync())
             .Where(s => Distribuciones.ContainsKey(s.IdSala))
             .ToList();

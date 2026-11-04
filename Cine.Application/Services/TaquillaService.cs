@@ -16,6 +16,8 @@ public class TaquillaService : ITaquillaService
     public const string SkuRebanadaPizza = "7501006";
     public const string SkuPizzaCompleta = "7501007";
     public const int FactorRebanadasPorPizza = 8;
+    private const string TipoDulceria = "dulceria";
+    private const string TipoBoleto = "boleto";
 
     private static readonly Dictionary<string, string> MapaCertificaciones = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -68,31 +70,7 @@ public class TaquillaService : ITaquillaService
             query = query.Where(p => p.Titulo.Contains(busqueda));
         }
 
-        var peliculasRaw = await query
-            .Select(p => new
-            {
-                p.IdPelicula,
-                p.Titulo,
-                p.Sinopsis,
-                p.Duracion,
-                p.Clasificacion,
-                p.Director,
-                p.PosterImage,
-                Funciones = p.Funcions
-                    .Where(f => f.FechaFuncion.Date == fechaHoy)
-                    .OrderBy(f => f.HoraInicio)
-                    .Select(f => new
-                    {
-                        f.IdFuncion,
-                        f.HoraInicio,
-                        NombreSala = f.IdSalaNavigation != null ? f.IdSalaNavigation.NombreSala : string.Empty,
-                        f.Precio
-                    })
-                    .ToList()
-            })
-            .ToListAsync();
-
-        var cartelera = peliculasRaw.Select(p => new PeliculaCarteleraDto
+        var cartelera = await query.Select(p => new PeliculaCarteleraDto
         {
             IdPelicula = p.IdPelicula,
             Titulo = p.Titulo,
@@ -101,16 +79,19 @@ public class TaquillaService : ITaquillaService
             Clasificacion = p.Clasificacion ?? string.Empty,
             Director = p.Director ?? string.Empty,
             poster_image = p.PosterImage ?? string.Empty,
-            Funciones = p.Funciones
+
+            Funciones = p.Funcions
+                .Where(f => f.FechaFuncion.Date == fechaHoy)
+                .OrderBy(f => f.HoraInicio)
                 .Select(f => new FuncionHorarioDto
                 {
                     IdFuncion = f.IdFuncion,
-                    Hora = f.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
-                    NombreSala = f.NombreSala,
+                    Hora = f.HoraInicio.ToString(),
+                    NombreSala = f.IdSalaNavigation != null ? f.IdSalaNavigation.NombreSala : string.Empty,
                     Precio = f.Precio
                 })
                 .ToList()
-        }).ToList();
+        }).ToListAsync();
 
         return cartelera;
     }
@@ -400,7 +381,7 @@ public class TaquillaService : ITaquillaService
             .Select(f => new FuncionHorarioDto
             {
                 IdFuncion = f.IdFuncion,
-                Hora = f.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
+                Hora = f.HoraInicio.ToString(),
                 NombreSala = sala.NombreSala,
                 Precio = f.Precio
             })
@@ -966,7 +947,7 @@ public class TaquillaService : ITaquillaService
                 IdFuncion = i.IdFuncion,
                 Sku = i.Sku,
                 Nombre = i.Nombre,
-                Tipo = string.IsNullOrWhiteSpace(i.Tipo) ? "dulceria" : i.Tipo,
+                Tipo = string.IsNullOrWhiteSpace(i.Tipo) ? TipoDulceria : i.Tipo,
                 Cantidad = i.Cantidad,
                 Precio = i.Precio,
                 Asientos = i.Asientos != null ? new List<string>(i.Asientos) : null
@@ -1006,7 +987,7 @@ public class TaquillaService : ITaquillaService
         }
 
         var existente = lineas.FirstOrDefault(l =>
-            l.Tipo == "dulceria" &&
+            l.Tipo == TipoDulceria &&
             ((l.IdProducto.HasValue && l.IdProducto.Value == producto.IdProducto) ||
              (!string.IsNullOrWhiteSpace(l.Sku) && string.Equals(l.Sku, producto.Sku, StringComparison.OrdinalIgnoreCase))));
 
@@ -1019,7 +1000,7 @@ public class TaquillaService : ITaquillaService
                 IdProducto = producto.IdProducto,
                 Sku = producto.Sku,
                 Nombre = producto.Nombre,
-                Tipo = "dulceria",
+                Tipo = TipoDulceria,
                 Cantidad = deltaCantidad,
                 Precio = producto.Precio
             });
@@ -1057,7 +1038,7 @@ public class TaquillaService : ITaquillaService
 
         int rebanadasSolicitadas = 0;
 
-        foreach (var linea in lineas.Where(l => l.Tipo == "dulceria"))
+        foreach (var linea in lineas.Where(l => l.Tipo == TipoDulceria))
         {
             var prod = BuscarProductoEnCatalogo(linea, catalogo);
             if (prod == null) continue;
@@ -1124,7 +1105,7 @@ public class TaquillaService : ITaquillaService
             }
 
             var cantidadEnCarrito = lineas
-                .Where(l => l.Tipo == "dulceria" &&
+                .Where(l => l.Tipo == TipoDulceria &&
                             ((l.IdProducto.HasValue && l.IdProducto.Value == prod.IdProducto) ||
                              string.Equals(l.Sku, prod.Sku, StringComparison.OrdinalIgnoreCase)))
                 .Sum(l => l.Cantidad);
@@ -1149,7 +1130,7 @@ public class TaquillaService : ITaquillaService
 
         foreach (var linea in lineas)
         {
-            var esBoleto = string.Equals(linea.Tipo, "boleto", StringComparison.OrdinalIgnoreCase);
+            var esBoleto = string.Equals(linea.Tipo, TipoBoleto, StringComparison.OrdinalIgnoreCase);
             var prodCatalogo = esBoleto ? null : BuscarProductoEnCatalogo(linea, catalogo);
             var precioUnitario = prodCatalogo?.Precio ?? linea.Precio;
             var subtotalLinea = precioUnitario * linea.Cantidad;
@@ -1174,7 +1155,7 @@ public class TaquillaService : ITaquillaService
                 IdFuncion = linea.IdFuncion,
                 Sku = prodCatalogo?.Sku ?? linea.Sku,
                 Nombre = prodCatalogo?.Nombre ?? linea.Nombre,
-                Tipo = esBoleto ? "boleto" : "dulceria",
+                Tipo = esBoleto ? TipoBoleto : TipoDulceria,
                 EtiquetaCategoria = esBoleto ? "TAQUILLA" : "DULCERÍA",
                 Cantidad = linea.Cantidad,
                 PrecioUnitario = precioUnitario,
@@ -1247,7 +1228,7 @@ public class TaquillaService : ITaquillaService
     private async Task ValidarDisponibilidadDulceriaAsync(List<RegistrarVentaItemDto> items)
     {
         var itemsDulceria = items
-            .Where(i => i.Tipo == "dulceria" || i.IdProducto.HasValue)
+            .Where(i => i.Tipo == TipoDulceria || i.IdProducto.HasValue)
             .ToList();
 
         if (itemsDulceria.Count == 0) return;
@@ -1258,38 +1239,7 @@ public class TaquillaService : ITaquillaService
 
         foreach (var item in itemsDulceria)
         {
-            if (item.Cantidad <= 0)
-            {
-                throw new ArgumentException("La cantidad de cada artículo de dulcería debe ser mayor a cero.");
-            }
-
-            var producto = await BuscarEntidadProductoAsync(item);
-            if (producto == null) continue;
-
-            if (producto.StockActual <= 0)
-            {
-                throw new InvalidOperationException(
-                    $"El artículo '{producto.Nombre}' no tiene inventario disponible (stock actual: 0).");
-            }
-
-            var esRebanada = (sf != null && producto.IdProducto == sf.IdProductoFraccion)
-                             || string.Equals(producto.CodigoBarras, SkuRebanadaPizza, StringComparison.OrdinalIgnoreCase);
-            var esPizzaCompleta = (sf != null && producto.IdProducto == sf.IdProductoMaestro)
-                                  || string.Equals(producto.CodigoBarras, SkuPizzaCompleta, StringComparison.OrdinalIgnoreCase);
-
-            if (esRebanada)
-            {
-                rebanadasTotalesRequeridas += item.Cantidad;
-            }
-            else if (esPizzaCompleta)
-            {
-                rebanadasTotalesRequeridas += item.Cantidad * factor;
-            }
-            else if (item.Cantidad > producto.StockActual)
-            {
-                throw new InvalidOperationException(
-                    $"Stock insuficiente para '{producto.Nombre}'. Solicitado: {item.Cantidad}, Disponible: {producto.StockActual}.");
-            }
+            rebanadasTotalesRequeridas += await ValidarYContarRebanadasDeItemAsync(item, sf, factor);
         }
 
         if (rebanadasTotalesRequeridas > 0)
@@ -1297,6 +1247,52 @@ public class TaquillaService : ITaquillaService
             await ValidarRebanadasDisponiblesAsync(sf, factor, rebanadasTotalesRequeridas);
         }
     }
+
+    private async Task<int> ValidarYContarRebanadasDeItemAsync(
+        RegistrarVentaItemDto item,
+        InventarioStockFraccionado? sf,
+        int factor)
+    {
+        if (item.Cantidad <= 0)
+        {
+            throw new ArgumentException("La cantidad de cada artículo de dulcería debe ser mayor a cero.");
+        }
+
+        var producto = await BuscarEntidadProductoAsync(item);
+        if (producto == null) return 0;
+
+        if (producto.StockActual <= 0)
+        {
+            throw new InvalidOperationException(
+                $"El artículo '{producto.Nombre}' no tiene inventario disponible (stock actual: 0).");
+        }
+
+        if (EsProductoRebanada(producto, sf))
+        {
+            return item.Cantidad;
+        }
+
+        if (EsProductoPizzaCompleta(producto, sf))
+        {
+            return item.Cantidad * factor;
+        }
+
+        if (item.Cantidad > producto.StockActual)
+        {
+            throw new InvalidOperationException(
+                $"Stock insuficiente para '{producto.Nombre}'. Solicitado: {item.Cantidad}, Disponible: {producto.StockActual}.");
+        }
+
+        return 0;
+    }
+
+    private static bool EsProductoRebanada(Producto producto, InventarioStockFraccionado? sf) =>
+        (sf != null && producto.IdProducto == sf.IdProductoFraccion) ||
+        string.Equals(producto.CodigoBarras, SkuRebanadaPizza, StringComparison.OrdinalIgnoreCase);
+
+    private static bool EsProductoPizzaCompleta(Producto producto, InventarioStockFraccionado? sf) =>
+        (sf != null && producto.IdProducto == sf.IdProductoMaestro) ||
+        string.Equals(producto.CodigoBarras, SkuPizzaCompleta, StringComparison.OrdinalIgnoreCase);
 
     private async Task ValidarRebanadasDisponiblesAsync(InventarioStockFraccionado? sf, int factor, int rebanadasRequeridas)
     {
@@ -1386,11 +1382,11 @@ public class TaquillaService : ITaquillaService
 
     private async Task ProcesarItemVentaAsync(int idVenta, RegistrarVentaItemDto item, Producto? productoBoleto)
     {
-        if (item.Tipo == "dulceria" || item.IdProducto.HasValue)
+        if (item.Tipo == TipoDulceria || item.IdProducto.HasValue)
         {
             await ProcesarItemDulceriaAsync(idVenta, item);
         }
-        else if (item.Tipo == "boleto")
+        else if (item.Tipo == TipoBoleto)
         {
             await ProcesarItemBoletoAsync(idVenta, item, productoBoleto);
         }
