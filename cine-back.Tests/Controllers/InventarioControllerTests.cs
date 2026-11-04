@@ -141,7 +141,7 @@ public class InventarioControllerTests
         // Arrange
         var list = new List<ProveedorDto>
         {
-            new() { IdProveedor = 1, Nombre = "Distribuidora Central de Dulces" }
+            new() { IdProveedor = 1, Nombre = "Distribuidora Central de Dulces", Rfc = "DCD123", Telefono = "246123", Contacto = "Juan" }
         };
 
         _serviceMock.Setup(s => s.ObtenerProveedoresAsync())
@@ -154,5 +154,130 @@ public class InventarioControllerTests
         var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
         var value = okResult.Value.Should().BeAssignableTo<List<ProveedorDto>>().Subject;
         value.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task GetInsumoPorId_WhenExists_ReturnsOk()
+    {
+        var dto = new InsumoInventarioDto { IdProducto = 5, Producto = "Pizza", Sku = "7501006", Categoria = "Comida", FactorEquivalencia = 8, Icono = "fa-burger" };
+        _serviceMock.Setup(s => s.ObtenerInsumoPorIdAsync(5)).ReturnsAsync(dto);
+
+        var result = await _controller.GetInsumoPorId(5);
+
+        result.Result.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task GetInsumoPorId_WhenNotFound_ReturnsNotFound()
+    {
+        _serviceMock.Setup(s => s.ObtenerInsumoPorIdAsync(999))
+            .ThrowsAsync(new KeyNotFoundException("No encontrado"));
+
+        var result = await _controller.GetInsumoPorId(999);
+
+        result.Result.Should().BeOfType<NotFoundObjectResult>();
+    }
+
+    [Fact]
+    public async Task ActualizarPrecios_WhenNotFound_ReturnsNotFound()
+    {
+        var dto = new ActualizarPreciosDto { CostoUnitario = 10m, PrecioVenta = 20m };
+        _serviceMock.Setup(s => s.ActualizarPreciosAsync(999, dto))
+            .ThrowsAsync(new KeyNotFoundException("No encontrado"));
+
+        var result = await _controller.ActualizarPrecios(999, dto);
+
+        result.Result.Should().BeOfType<NotFoundObjectResult>();
+    }
+
+    [Fact]
+    public async Task ActualizarPrecios_WhenArgumentInvalid_ReturnsBadRequest()
+    {
+        var dto = new ActualizarPreciosDto { CostoUnitario = -1m, PrecioVenta = 20m };
+        _serviceMock.Setup(s => s.ActualizarPreciosAsync(1, dto))
+            .ThrowsAsync(new ArgumentException("Costo inválido"));
+
+        var result = await _controller.ActualizarPrecios(1, dto);
+
+        result.Result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task ActualizarPrecios_WhenModelStateInvalid_ReturnsBadRequest()
+    {
+        _controller.ModelState.AddModelError("CostoUnitario", "Requerido");
+        var result = await _controller.ActualizarPrecios(1, new ActualizarPreciosDto());
+
+        result.Result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task GetHistorialEntradas_ReturnsOk()
+    {
+        var list = new List<EntradaHistorialDto>
+        {
+            new()
+            {
+                IdFactura = 1,
+                Proveedor = "Prov",
+                Factura = "F-1",
+                TotalPagado = 100m,
+                RegistradoPor = "admin",
+                Lineas = new List<EntradaHistorialLineaDto>
+                {
+                    new() { IdEntrada = 1, IdProducto = 1, Producto = "P1", Sku = "S1", CantidadComprada = 2, FactorEquivalencia = 1, CantidadStockAgregada = 2, CostoUnitario = 50m, CostoTotal = 100m }
+                }
+            }
+        };
+        _serviceMock.Setup(s => s.ObtenerHistorialEntradasAsync(50)).ReturnsAsync(list);
+
+        var result = await _controller.GetHistorialEntradas(50);
+
+        result.Result.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task RegistrarEntrada_WhenNotFound_ReturnsNotFound()
+    {
+        var dto = new RegistrarEntradaDto { IdProveedor = 99, FolioFactura = "F-1", TotalPagado = 10m };
+        _serviceMock.Setup(s => s.RegistrarEntradaMercanciaAsync(dto, It.IsAny<int?>()))
+            .ThrowsAsync(new KeyNotFoundException("Proveedor no existe"));
+
+        var result = await _controller.RegistrarEntrada(dto);
+
+        result.Result.Should().BeOfType<NotFoundObjectResult>();
+    }
+
+    [Fact]
+    public async Task RegistrarEntrada_WhenInvalidOperation_ReturnsBadRequest()
+    {
+        var dto = new RegistrarEntradaDto { IdProveedor = 1, FolioFactura = "F-1", TotalPagado = 10m };
+        _serviceMock.Setup(s => s.RegistrarEntradaMercanciaAsync(dto, It.IsAny<int?>()))
+            .ThrowsAsync(new InvalidOperationException("Duplicado"));
+
+        var result = await _controller.RegistrarEntrada(dto);
+
+        result.Result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task RegistrarEntrada_WhenArgumentException_ReturnsBadRequest()
+    {
+        var dto = new RegistrarEntradaDto { IdProveedor = 1, FolioFactura = "", TotalPagado = 10m };
+        _serviceMock.Setup(s => s.RegistrarEntradaMercanciaAsync(dto, It.IsAny<int?>()))
+            .ThrowsAsync(new ArgumentException("Folio vacío"));
+
+        var result = await _controller.RegistrarEntrada(dto);
+
+        result.Result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task RegistrarEntrada_WhenModelStateInvalid_ReturnsBadRequest()
+    {
+        _controller.ModelState.AddModelError("FolioFactura", "Requerido");
+        var result = await _controller.RegistrarEntrada(new RegistrarEntradaDto());
+
+        result.Result.Should().BeOfType<BadRequestObjectResult>();
     }
 }
