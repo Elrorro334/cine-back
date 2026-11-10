@@ -467,16 +467,32 @@ dotnet test --collect:"XPlat Code Coverage;Format=opencover"
 
 ## 📡 Catálogo de Endpoints Principales
 
+Catálogo oficial de endpoints expuestos para consumo de la PWA del frontend (`cine_xilotzin`) y clientes autorizados:
+
 | Módulo | Método | Endpoint | Descripción | Auth Requerida |
 | :--- | :---: | :--- | :--- | :---: |
-| **Auth** | `POST` | `/api/auth/login` | Autenticación de vendedores con verificación estricta de IP local | No |
-| **Auth** | `GET` | `/api/auth/check-network` | Valida si la IP remota pertenece al perímetro autorizado del cine | No |
-| **Cartelera** | `GET` | `/api/cartelera/activas` | Lista de películas activas en cartelera y sus funciones programadas | No |
-| **Taquilla** | `POST` | `/api/taquilla/registrar-pelicula` | Registra una película vinculándola y enriqueciéndola con la API de TMDB | Sí (Admin/Taquilla) |
-| **Taquilla** | `DELETE`| `/api/taquilla/pelicula/{id}` | Desactiva o da de baja una película de la cartelera | Sí (Admin) |
-| **Dashboard**| `GET` | `/api/dashboard/resumen` | 4 KPIs gerenciales (Ingresos, Taquilla, Dulcería, Efectivo vs Tarjeta) | Sí (Admin) |
-| **Dashboard**| `GET` | `/api/dashboard/semana-actual` | Fechas límites de la semana cinematográfica actual (Jueves a Miércoles) | Sí (Admin) |
-| **Dashboard**| `GET` | `/api/dashboard/exportar-transacciones` | Genera y descarga el archivo CSV con UTF-8 BOM para Excel / Contabilidad | Sí (Admin) |
+| **Auth** | `GET` | `/api/Auth/check-network` | Valida si la IP del cliente pertenece al perímetro de red local autorizado (403 si es remota) | No |
+| **Auth** | `POST` | `/api/Auth/login` | Autenticación de operadores y emisión de token JWT con restricción de red | No |
+| **Cartelera** | `GET` | `/api/cartelera` | Cartelera pública con funciones y horarios del día (filtro opcional por título) | No |
+| **Cartelera** | `GET` | `/api/cartelera/promociones` | Catálogo dinámico de promociones y avisos vigentes para el carrusel público | No |
+| **Cartelera** | `GET` | `/api/cartelera/buscar-tmdb` | Búsqueda de películas en tiempo real a través de la API de TMDB | Sí (JWT) |
+| **Cartelera** | `GET` | `/api/cartelera/detalle-tmdb/{id}` | Consulta el detalle enriquecido de una película en TMDB (sinopsis, póster, reparto) | Sí (JWT) |
+| **Cartelera** | `POST` | `/api/cartelera/registrar` | Registra una película en SQL Server con sus funciones programadas en un rango | Sí (JWT) |
+| **Cartelera** | `POST` | `/api/cartelera/sincronizar-catalogo-base` | Sincroniza e inicializa el catálogo cinematográfico base desde TMDB | Sí (JWT) |
+| **Cartelera** | `DELETE` | `/api/cartelera/pelicula/{id}` | Retira o da de baja una película de la cartelera activa | Sí (JWT) |
+| **Taquilla** | `GET` | `/api/taquilla/cartelera` | Cartelera en vivo para la terminal del Punto de Venta (POS) | Sí (JWT) |
+| **Taquilla** | `GET` | `/api/taquilla/funciones/{id}/butacas` | Mapa de asientos y estado de ocupación en tiempo real (`estado_butaca_funcion`) | Sí (JWT) |
+| **Taquilla** | `GET` | `/api/taquilla/dulceria` | Catálogo de productos y combos con validación de `stock_actual` | Sí (JWT) |
+| **Taquilla** | `POST` | `/api/taquilla/venta` | Transacción ACID para confirmar la venta, persistir folio `VT-XXXXX`, bloquear butacas y descontar stock | Sí (JWT) |
+| **Taquilla** | `GET` | `/api/taquilla/preorden/{codigoQr}` | Lectura y validación de preórdenes web mediante código QR | Sí (JWT) |
+| **Dashboard** | `GET` | `/api/dashboard/resumen` | 4 KPIs gerenciales (Ingresos, Taquilla, Dulcería, Efectivo vs. Tarjeta) y transacciones | Sí (Admin) |
+| **Dashboard** | `GET` | `/api/dashboard/semana-actual` | Fechas límites de la semana cinematográfica actual (Jueves a Miércoles) | Sí (Admin) |
+| **Dashboard** | `GET` | `/api/dashboard/exportar-transacciones` | Genera y descarga el archivo CSV con UTF-8 BOM estructurado para Excel / Contabilidad | Sí (Admin) |
+| **Inventario** | `GET` | `/api/inventario/insumos` | Inventario maestro con 8 columnas, margen recalculado y alertas de desabasto (HU-11) | Sí (Admin) |
+| **Inventario** | `PUT` | `/api/inventario/insumos/{id}/precios` | Actualiza costo unitario y precio de venta con protección de margen negativo (HU-11) | Sí (Admin) |
+| **Inventario** | `GET` | `/api/inventario/entradas` | Historial interactivo de facturas recibidas de proveedores (HU-11) | Sí (Admin) |
+| **Inventario** | `POST` | `/api/inventario/entradas` | Registra factura de mercancía con equivalencia en stock fraccionado (HU-11) | Sí (Admin) |
+| **Inventario** | `GET` | `/api/inventario/proveedores` | Catálogo de proveedores activos para formulario modal (HU-11) | Sí (Admin) |
 
 ---
 

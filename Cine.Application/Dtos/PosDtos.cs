@@ -14,6 +14,8 @@ public class FuncionButacasDto
     public int IdFuncion { get; set; }
     public int IdSala { get; set; }
     public string NombreSala { get; set; } = string.Empty;
+    public string PeliculaTitulo { get; set; } = string.Empty;
+    public string Horario { get; set; } = string.Empty;
     public decimal Precio { get; set; }
     public List<ButacaDto> Butacas { get; set; } = new();
 }
@@ -27,6 +29,9 @@ public class ProductoDto
     public decimal Precio { get; set; }
     public int Stock { get; set; }
     public string? Img { get; set; }
+    public bool EsFraccionado { get; set; }
+    public int FactorFraccion { get; set; } = 1;
+    public string? DescripcionDescuento { get; set; }
 }
 
 public class RegistrarVentaItemDto
