@@ -1,8 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+
 namespace Cine.Domain.Entities
 {
-
     public partial class Producto
     {
         public int IdProducto { get; set; }
@@ -21,6 +21,10 @@ namespace Cine.Domain.Entities
 
         public int StockMinimo { get; set; }
 
+        public int FactorEquivalencia { get; set; } = 1;
+
+        public bool Activo { get; set; } = true;
+
         public virtual ICollection<DetallePreordenDulcerium> DetallePreordenDulceria { get; set; } = new List<DetallePreordenDulcerium>();
 
         public virtual ICollection<DetalleVentum> DetalleVenta { get; set; } = new List<DetalleVentum>();
@@ -28,5 +32,9 @@ namespace Cine.Domain.Entities
         public virtual ICollection<EntradaMercancium> EntradaMercancia { get; set; } = new List<EntradaMercancium>();
 
         public virtual Categorium IdCategoriaNavigation { get; set; } = null!;
+
+        public virtual ICollection<InventarioStockFraccionado> StockFraccionadoComoMaestro { get; set; } = new List<InventarioStockFraccionado>();
+
+        public virtual ICollection<InventarioStockFraccionado> StockFraccionadoComoFraccion { get; set; } = new List<InventarioStockFraccionado>();
     }
 }

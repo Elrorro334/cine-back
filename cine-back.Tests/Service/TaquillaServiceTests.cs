@@ -533,6 +533,86 @@ public class TaquillaServiceTests
     }
 
     [Fact]
+    public async Task RegistrarVentaAsync_WhenSeatAlreadyOccupied_ThrowsInvalidOperationException()
+    {
+        using var context = GetInMemoryDbContext();
+
+        var sala = new Sala { IdSala = 1, NombreSala = "Sala 1", CapacidadTotal = 48, TipoPantalla = "2D" };
+        var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(18), Precio = 50m };
+        var b1 = new Butaca { IdButaca = 1, IdSala = 1, Fila = "B", Numero = 1 };
+        var estadoOcupado = new EstadoButacaFuncion { IdEstado = 1, IdFuncion = 10, IdButaca = 1, Estato = true };
+
+        context.Salas.Add(sala);
+        context.Funcions.Add(funcion);
+        context.Butacas.Add(b1);
+        context.EstadoButacaFuncions.Add(estadoOcupado);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+
+        var dto = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "boleto",
+                    IdFuncion = 10,
+                    Nombre = "Boleto General",
+                    Cantidad = 1,
+                    Precio = 50m,
+                    Asientos = new List<string> { "B1" }
+                }
+            }
+        };
+
+        Func<Task> act = async () => await service.RegistrarVentaAsync(dto);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*ya se encuentra ocupada*");
+    }
+
+    [Fact]
+    public async Task RegistrarVentaAsync_WhenDuplicateSeatsInRequest_ThrowsArgumentException()
+    {
+        using var context = GetInMemoryDbContext();
+
+        var sala = new Sala { IdSala = 1, NombreSala = "Sala 1", CapacidadTotal = 48, TipoPantalla = "2D" };
+        var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(18), Precio = 50m };
+        var b1 = new Butaca { IdButaca = 1, IdSala = 1, Fila = "B", Numero = 1 };
+
+        context.Salas.Add(sala);
+        context.Funcions.Add(funcion);
+        context.Butacas.Add(b1);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+
+        var dto = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "boleto",
+                    IdFuncion = 10,
+                    Nombre = "Boleto General",
+                    Cantidad = 2,
+                    Precio = 50m,
+                    Asientos = new List<string> { "B1", "B1" }
+                }
+            }
+        };
+
+        Func<Task> act = async () => await service.RegistrarVentaAsync(dto);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*duplicados*");
+    }
+
+    [Fact]
     public async Task ObtenerPreordenAsync_WithValidAndInvalidQr_ReturnsExpectedResult()
     {
         using var context = GetInMemoryDbContext();
@@ -580,8 +660,690 @@ public class TaquillaServiceTests
         validRes!.Cliente.Should().Be("Ana López");
         validRes.Pelicula.Should().Be("Avatar");
         validRes.BoletosGeneral.Should().Be(2);
+        validRes.Asientos.Should().BeEmpty("las butacas se asignan en taquilla al canjear el QR");
         validRes.Combos.Should().HaveCount(1);
         validRes.Total.Should().Be(210m);
+    }
+
+    [Fact]
+    public async Task CrearPreordenAsync_WithValidData_CreatesAndReturnsPreorden()
+    {
+        var context = GetInMemoryDbContext();
+        var sala = new Sala { IdSala = 1, NombreSala = "Sala 1", CapacidadTotal = 100, TipoPantalla = "2D" };
+        var pelicula = new Pelicula { IdPelicula = 301, Titulo = "La posesion de la momia", Director = "Director Test", Sinopsis = "Sinopsis Test" };
+        var funcion = new Funcion
+        {
+            IdFuncion = 302,
+            IdPelicula = 301,
+            IdSala = 1,
+            FechaFuncion = DateTime.Today,
+            IdSalaNavigation = sala,
+            IdPeliculaNavigation = pelicula,
+            HoraInicio = DateTime.Today.AddHours(14).AddMinutes(30),
+            Precio = 50m
+        };
+        context.Salas.Add(sala);
+        var combo = new Producto
+        {
+            IdProducto = 303,
+            CodigoBarras = "COMBO01",
+            Nombre = "Combo Pareja",
+            PrecioVenta = 110m
+        };
+
+        context.Peliculas.Add(pelicula);
+        context.Funcions.Add(funcion);
+        context.Productos.Add(combo);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = 302,
+            Boletos = 2,
+            NombreCliente = "Alberto Cruz",
+            TelefonoCliente = "5512345678",
+            Combos = new List<CrearPreordenItemDulceriaDto>
+            {
+                new CrearPreordenItemDulceriaDto { IdProducto = 303, Cantidad = 1 }
+            }
+        };
+
+        var result = await service.CrearPreordenAsync(dto);
+
+        result.Should().NotBeNull();
+        result.Codigo.Should().StartWith("PRE-XIL-");
+        result.Cliente.Should().Be("Alberto Cruz");
+        result.Telefono.Should().Be("5512345678");
+        result.Pelicula.Should().Be("La posesion de la momia");
+        result.BoletosGeneral.Should().Be(2);
+        result.PrecioBoleto.Should().Be(50m);
+        result.Combos.Should().HaveCount(1);
+        result.Total.Should().Be(210m); // 2*50 + 110 = 210
+        result.VigenciaDias.Should().Be(12);
+        result.EstadoActivo.Should().BeTrue();
+
+        var dbPreorden = await context.Preordens.FirstOrDefaultAsync(p => p.CodigoQr == result.Codigo);
+        dbPreorden.Should().NotBeNull();
+        dbPreorden!.Vigencia.Should().Be(12);
+    }
+
+    [Fact]
+    public async Task CrearPreordenAsync_WithExistingClient_ReusesClientAndUpdatesName()
+    {
+        var context = GetInMemoryDbContext();
+        var sala2 = new Sala { IdSala = 1, NombreSala = "Sala 1", CapacidadTotal = 100, TipoPantalla = "2D" };
+        var pelicula = new Pelicula { IdPelicula = 310, Titulo = "Spiderman", Director = "Director Test", Sinopsis = "Sinopsis Test" };
+        var funcion = new Funcion
+        {
+            IdFuncion = 311,
+            IdPelicula = 310,
+            IdSala = 1,
+            FechaFuncion = DateTime.Today,
+            IdSalaNavigation = sala2,
+            IdPeliculaNavigation = pelicula,
+            HoraInicio = DateTime.Today.AddHours(16),
+            Precio = 60m
+        };
+        context.Salas.Add(sala2);
+        var clienteExistente = new Cliente
+        {
+            IdCliente = 400,
+            Nombre = "Antiguo Nombre",
+            NumeroTelefono = "5599887766",
+            Correo = "5599887766@xilotzin.local"
+        };
+
+        context.Peliculas.Add(pelicula);
+        context.Funcions.Add(funcion);
+        context.Clientes.Add(clienteExistente);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = 311,
+            Boletos = 3,
+            NombreCliente = "Nuevo Nombre",
+            TelefonoCliente = "5599887766"
+        };
+
+        var result = await service.CrearPreordenAsync(dto);
+
+        result.Should().NotBeNull();
+        result.Cliente.Should().Be("Nuevo Nombre");
+        result.Total.Should().Be(180m); // 3*60 = 180
+
+        var clientesCount = await context.Clientes.CountAsync(c => c.NumeroTelefono == "5599887766");
+        clientesCount.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(0, 2, "Juan", "5512345678")] // IdFuncion inválido
+    [InlineData(1, 0, "Juan", "5512345678")] // Boletos < 1
+    [InlineData(1, 11, "Juan", "5512345678")] // Boletos > 10
+    [InlineData(1, 2, "", "5512345678")] // Nombre vacío
+    [InlineData(1, 2, "Ab", "5512345678")] // Nombre muy corto
+    [InlineData(1, 2, "Juan", "1234567890")] // Teléfono que no empieza con 55
+    [InlineData(1, 2, "Juan", "551234567")] // Teléfono de 9 dígitos
+    [InlineData(1, 2, "Juan", "55123456789")] // Teléfono de 11 dígitos
+    [InlineData(1, 2, "Juan", "551234567A")] // Caracter no numérico
+    public async Task CrearPreordenAsync_WithInvalidInputs_ThrowsArgumentException(
+        int idFuncion, int boletos, string nombre, string telefono)
+    {
+        var context = GetInMemoryDbContext();
+        var service = new TaquillaService(context);
+
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = idFuncion,
+            Boletos = boletos,
+            NombreCliente = nombre,
+            TelefonoCliente = telefono
+        };
+
+        Func<Task> act = async () => await service.CrearPreordenAsync(dto);
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task CrearPreordenAsync_WhenDtoNull_ThrowsArgumentException()
+    {
+        var context = GetInMemoryDbContext();
+        var service = new TaquillaService(context);
+
+        Func<Task> act = async () => await service.CrearPreordenAsync(null!);
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task CrearPreordenAsync_WhenFuncionNotFound_ThrowsArgumentException()
+    {
+        var context = GetInMemoryDbContext();
+        var service = new TaquillaService(context);
+
+        var dto = new CrearPreordenDto
+        {
+            IdFuncion = 9999,
+            Boletos = 2,
+            NombreCliente = "Cliente Prueba",
+            TelefonoCliente = "5511223344"
+        };
+
+        Func<Task> act = async () => await service.CrearPreordenAsync(dto);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*No se encontró la función*");
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WhenMovieNotFound_ReturnsNull()
+    {
+        using var context = GetInMemoryDbContext();
+        var service = new TaquillaService(context);
+
+        var result = await service.ObtenerTrailerPeliculaAsync(9999);
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WhenFoundAndTmdbReturnsVideos_SelectsValidYouTubeVideo()
+    {
+        using var context = GetInMemoryDbContext();
+        var pelicula = new Pelicula
+        {
+            IdPelicula = 500,
+            Titulo = "Dragon 3",
+            Sinopsis = "Sinopsis de dragon",
+            Duracion = 100,
+            Director = "Dean DeBlois",
+            Clasificacion = "A"
+        };
+        context.Peliculas.Add(pelicula);
+        await context.SaveChangesAsync();
+
+        var searchJson = "{\"results\":[{\"id\":166428,\"title\":\"Dragon 3\"}]}";
+        var videosJson = "{\"results\":[{\"site\":\"YouTube\",\"type\":\"Trailer\",\"key\":\"invalidKey\",\"name\":\"Deleted Trailer\"},{\"site\":\"YouTube\",\"type\":\"Trailer\",\"key\":\"kN3lE7rpggQ\",\"name\":\"Trailer Oficial Español\"}]}";
+
+        var fakeHandler = new FakeHttpMessageHandler((req) =>
+        {
+            var uri = req.RequestUri?.ToString() ?? "";
+            if (uri.Contains("api.themoviedb.org/3/search/movie"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(searchJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (uri.Contains("api.themoviedb.org/3/movie/166428/videos"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(videosJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (uri.Contains("youtube.com/oembed"))
+            {
+                if (uri.Contains("invalidKey"))
+                {
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+                }
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var service = new TaquillaService(context, new HttpClient(fakeHandler));
+        var result = await service.ObtenerTrailerPeliculaAsync(500);
+
+        result.Should().NotBeNull();
+        result!.IdPelicula.Should().Be(500);
+        result.TrailerKey.Should().Be("kN3lE7rpggQ");
+        result.Trailers.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WithSubtitleColon_FallsBackToBaseTitle()
+    {
+        using var context = GetInMemoryDbContext();
+        var pelicula = new Pelicula
+        {
+            IdPelicula = 501,
+            Titulo = "Super Mario: El Comienzo",
+            Sinopsis = "Sinopsis de mario",
+            Duracion = 90,
+            Director = "Nintendo",
+            Clasificacion = "AA"
+        };
+        context.Peliculas.Add(pelicula);
+        await context.SaveChangesAsync();
+
+        var emptyResultsJson = "{\"results\":[]}";
+        var foundResultsJson = "{\"results\":[{\"id\":999,\"title\":\"Super Mario\"}]}";
+        var videosJson = "{\"results\":[{\"site\":\"YouTube\",\"type\":\"Trailer\",\"key\":\"marioKey\",\"name\":\"Tráiler Oficial\"}]}";
+
+        var fakeHandler = new FakeHttpMessageHandler((req) =>
+        {
+            var uri = req.RequestUri?.ToString() ?? "";
+            if (uri.Contains("api.themoviedb.org/3/search/movie"))
+            {
+                if (uri.Contains("Super%20Mario%3A") || uri.Contains("Super%20Mario:"))
+                {
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(emptyResultsJson, System.Text.Encoding.UTF8, "application/json")
+                    };
+                }
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(foundResultsJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (uri.Contains("api.themoviedb.org/3/movie/999/videos"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(videosJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (uri.Contains("youtube.com/oembed"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var service = new TaquillaService(context, new HttpClient(fakeHandler));
+        var result = await service.ObtenerTrailerPeliculaAsync(501);
+
+        result.Should().NotBeNull();
+        result!.TrailerKey.Should().Be("marioKey");
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WhenTmdbReturnsNoVideos_FallsBackToPreconfiguredTrailers()
+    {
+        using var context = GetInMemoryDbContext();
+        var pelicula = new Pelicula
+        {
+            IdPelicula = 1,
+            Titulo = "Spider-Man: Un Nuevo Día",
+            Sinopsis = "Sinopsis spiderman",
+            Duracion = 120,
+            Director = "Director Spiderman",
+            Clasificacion = "B"
+        };
+        context.Peliculas.Add(pelicula);
+        await context.SaveChangesAsync();
+
+        var fakeHandler = new FakeHttpMessageHandler((req) =>
+        {
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var service = new TaquillaService(context, new HttpClient(fakeHandler));
+        var result = await service.ObtenerTrailerPeliculaAsync(1);
+
+        result.Should().NotBeNull();
+        result!.TrailerKey.Should().Be("QXibcL7-XbU");
+    }
+
+    [Fact]
+    public async Task ObtenerTrailerPeliculaAsync_WhenCached_ReturnsCachedImmediately()
+    {
+        using var context = GetInMemoryDbContext();
+        var pelicula = new Pelicula
+        {
+            IdPelicula = 14,
+            Titulo = "Caminos del crimen",
+            Sinopsis = "Sinopsis crimen",
+            Duracion = 110,
+            Director = "Director Crimen",
+            Clasificacion = "B15"
+        };
+        context.Peliculas.Add(pelicula);
+        await context.SaveChangesAsync();
+
+        var fakeHandler = new FakeHttpMessageHandler((req) => throw new HttpRequestException("Network failure"));
+        var service = new TaquillaService(context, new HttpClient(fakeHandler));
+
+        var firstCall = await service.ObtenerTrailerPeliculaAsync(14);
+        firstCall.Should().NotBeNull();
+        firstCall!.TrailerKey.Should().Be("R4GEdGRQVBU");
+
+        var secondCall = await service.ObtenerTrailerPeliculaAsync(14);
+        secondCall.Should().BeSameAs(firstCall);
+    }
+
+    // =========================================================================
+    // Pruebas Unitarias HU-07: POS Dulcería, Lector de Código de Barras y Stock Fraccionado
+    // =========================================================================
+
+    [Fact]
+    public async Task SeedDulceriaAsync_SeedsCategoriesProductsAndFractionalInventoryIdempotently()
+    {
+        using var context = GetInMemoryDbContext();
+
+        await DbSeeder.SeedDulceriaAsync(context);
+        // Segunda ejecución para validar idempotencia
+        await DbSeeder.SeedDulceriaAsync(context);
+
+        var categorias = await context.Categoria.ToListAsync();
+        categorias.Should().Contain(c => c.Nombre == "Snacks");
+        categorias.Should().Contain(c => c.Nombre == "Bebidas");
+        categorias.Should().Contain(c => c.Nombre == "Pizzas");
+
+        var palomitas = await context.Productos.FirstOrDefaultAsync(p => p.CodigoBarras == "7501001");
+        palomitas.Should().NotBeNull();
+        palomitas!.Nombre.Should().Be("Palomitas Grandes");
+        palomitas.PrecioVenta.Should().Be(50.00m);
+
+        var stockFraccionado = await context.InventarioStockFraccionados.FirstOrDefaultAsync();
+        stockFraccionado.Should().NotBeNull();
+        stockFraccionado!.FactorFraccion.Should().Be(8);
+        stockFraccionado.StockFraccionesActual.Should().Be(56);
+    }
+
+    [Fact]
+    public async Task ObtenerCatalogoDulceriaPosAsync_ReturnsSnacksBebidasAndStockFraccionadoMonitor()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+
+        var service = new TaquillaService(context);
+        var catalogo = await service.ObtenerCatalogoDulceriaPosAsync();
+
+        catalogo.Should().NotBeNull();
+        catalogo.StockFraccionado.Should().NotBeNull();
+        catalogo.StockFraccionado!.StockRebanadasActual.Should().Be(56);
+        catalogo.StockFraccionado.PizzasCompletasEquivalentes.Should().Be(7);
+        catalogo.StockFraccionado.EtiquetaMonitor.Should().Be("Stock: 56 rebanadas (7 pizzas)");
+        catalogo.StockFraccionado.ProductoRebanada.Should().NotBeNull();
+        catalogo.StockFraccionado.ProductoRebanada!.Precio.Should().Be(35.00m);
+        catalogo.StockFraccionado.ProductoPizzaCompleta.Should().NotBeNull();
+        catalogo.StockFraccionado.ProductoPizzaCompleta!.Precio.Should().Be(180.00m);
+
+        catalogo.SnacksYBebidas.Should().HaveCount(5);
+        catalogo.SnacksYBebidas.Should().Contain(p => p.Sku == "7501001" && p.Nombre == "Palomitas Grandes");
+        catalogo.SnacksYBebidas.Should().Contain(p => p.Sku == "7501003" && p.Nombre == "Nachos con Queso");
+    }
+
+    [Fact]
+    public async Task BuscarProductoPorSkuAsync_WhenValidBarcodeScanned_ReturnsProducto()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        var prod = await service.BuscarProductoPorSkuAsync("7501001");
+
+        prod.Should().NotBeNull();
+        prod!.Sku.Should().Be("7501001");
+        prod.Nombre.Should().Be("Palomitas Grandes");
+        prod.Precio.Should().Be(50.00m);
+    }
+
+    [Fact]
+    public async Task BuscarProductoPorSkuAsync_WhenInvalidOrNotFoundOrZeroStock_HandlesCorrectly()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+
+        var agotado = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501004");
+        agotado.StockActual = 0;
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+
+        Func<Task> emptyAct = async () => await service.BuscarProductoPorSkuAsync("   ");
+        await emptyAct.Should().ThrowAsync<ArgumentException>();
+
+        var noExiste = await service.BuscarProductoPorSkuAsync("9999999");
+        noExiste.Should().BeNull();
+
+        Func<Task> zeroStockAct = async () => await service.BuscarProductoPorSkuAsync("7501004");
+        await zeroStockAct.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*inventario 0*");
+    }
+
+    [Fact]
+    public async Task CalcularOrdenPosAsync_InheritsBoletosAndAddsScannedSkuAndFractionalSlice()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        // Paso 1 heredado (HU-06): 1 boleto de $50.00 + Criterio 1 (HU-07): Escaneo de SKU 7501001 ($50.00)
+        var req1 = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "boleto",
+                    IdFuncion = 10,
+                    Sku = "BOL-GEN",
+                    Nombre = "Terrifier 3: Payaso Siniestro (12:30)",
+                    Cantidad = 1,
+                    Precio = 50.00m,
+                    Asientos = new List<string> { "C1" }
+                }
+            },
+            SkuAgregar = "7501001",
+            CantidadAgregar = 1
+        };
+
+        var res1 = await service.CalcularOrdenPosAsync(req1);
+
+        res1.SubtotalBoletos.Should().Be(50.00m);
+        res1.SubtotalDulceria.Should().Be(50.00m);
+        res1.TotalVenta.Should().Be(100.00m);
+        res1.TotalArticulos.Should().Be(2);
+        res1.ProductoAgregado.Should().NotBeNull();
+        res1.ProductoAgregado!.Nombre.Should().Be("Palomitas Grandes");
+
+        // Criterio 3 (HU-07): Seleccionar "Rebanada Individual" (SKU 7501006, $35.00) descuenta 1 rebanada de 56 -> 55
+        var req2 = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = res1.Items.Select(i => new RegistrarVentaItemDto
+            {
+                IdProducto = i.IdProducto,
+                IdFuncion = i.IdFuncion,
+                Sku = i.Sku,
+                Nombre = i.Nombre,
+                Tipo = i.Tipo,
+                Cantidad = i.Cantidad,
+                Precio = i.PrecioUnitario,
+                Asientos = i.Asientos
+            }).ToList(),
+            SkuAgregar = "7501006",
+            CantidadAgregar = 1
+        };
+
+        var res2 = await service.CalcularOrdenPosAsync(req2);
+
+        res2.TotalVenta.Should().Be(135.00m); // 50 + 50 + 35
+        res2.StockFraccionado.Should().NotBeNull();
+        res2.StockFraccionado!.StockRebanadasActual.Should().Be(55);
+        res2.StockFraccionado.PizzasCompletasEquivalentes.Should().Be(6);
+        res2.StockFraccionado.EtiquetaMonitor.Should().Be("Stock: 55 rebanadas (6 pizzas)");
+    }
+
+    [Fact]
+    public async Task CalcularOrdenPosAsync_WhenAddingWholePizza_DeductsEightSlicesProportional()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        var req = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = new List<RegistrarVentaItemDto>(),
+            SkuAgregar = "7501007", // Pizza Completa (8 Rebanadas)
+            CantidadAgregar = 1
+        };
+
+        var res = await service.CalcularOrdenPosAsync(req);
+
+        res.TotalVenta.Should().Be(180.00m);
+        res.StockFraccionado.Should().NotBeNull();
+        res.StockFraccionado!.StockRebanadasActual.Should().Be(48); // 56 - 8 = 48
+        res.StockFraccionado.PizzasCompletasEquivalentes.Should().Be(6); // 48 / 8 = 6
+        res.StockFraccionado.EtiquetaMonitor.Should().Be("Stock: 48 rebanadas (6 pizzas)");
+    }
+
+    [Fact]
+    public async Task CalcularOrdenPosAsync_WhenFractionalOrNormalStockExceeded_ThrowsInvalidOperationException()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        // Intentar pedir 8 pizzas completas (64 rebanadas) cuando solo hay 56 rebanadas (7 pizzas)
+        var reqExcesoPizza = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = new List<RegistrarVentaItemDto>(),
+            SkuAgregar = "7501007",
+            CantidadAgregar = 8
+        };
+
+        Func<Task> actPizza = async () => await service.CalcularOrdenPosAsync(reqExcesoPizza);
+        await actPizza.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Stock fraccionado insuficiente*");
+
+        // Producto con stock 0 impide agregarse (Regla de Negocio 1)
+        var nachos = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501003");
+        nachos.StockActual = 0;
+        await context.SaveChangesAsync();
+
+        var reqCeroStock = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = new List<RegistrarVentaItemDto>(),
+            SkuAgregar = "7501003",
+            CantidadAgregar = 1
+        };
+
+        Func<Task> actCero = async () => await service.CalcularOrdenPosAsync(reqCeroStock);
+        await actCero.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*inventario actual 0*");
+    }
+
+    [Fact]
+    public async Task RegistrarVentaAsync_WithFractionalPizzaItems_UpdatesMasterAndSliceStockProportionally()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        // Vender 1 Rebanada Individual (descuenta 1 rebanada -> de 56 baja a 55)
+        var ventaRebanada = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    Sku = "7501006",
+                    Nombre = "Rebanada Individual",
+                    Cantidad = 1,
+                    Precio = 35.00m
+                }
+            }
+        };
+
+        await service.RegistrarVentaAsync(ventaRebanada);
+
+        var sfDespues1 = await context.InventarioStockFraccionados.FirstAsync();
+        sfDespues1.StockFraccionesActual.Should().Be(55);
+
+        var prodRebanada = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501006");
+        var prodPizza = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501007");
+        prodRebanada.StockActual.Should().Be(55);
+        prodPizza.StockActual.Should().Be(6); // 55 / 8 = 6 pizzas completas disponibles
+
+        // Vender 7 rebanadas adicionales (total 8 rebanadas descontadas = 1 pizza completa menos -> 48 rebanadas = 6 pizzas)
+        var venta7Rebanadas = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    Sku = "7501006",
+                    Nombre = "Rebanada Individual",
+                    Cantidad = 7,
+                    Precio = 35.00m
+                }
+            }
+        };
+
+        await service.RegistrarVentaAsync(venta7Rebanadas);
+
+        var sfDespues8 = await context.InventarioStockFraccionados.FirstAsync();
+        sfDespues8.StockFraccionesActual.Should().Be(48);
+        prodRebanada.StockActual.Should().Be(48);
+        prodPizza.StockActual.Should().Be(6);
+
+        // Vender 1 Pizza Completa (descuenta 8 rebanadas -> 40 rebanadas = 5 pizzas)
+        var ventaPizzaCompleta = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    Sku = "7501007",
+                    Nombre = "Pizza Completa (8 Rebanadas)",
+                    Cantidad = 1,
+                    Precio = 180.00m
+                }
+            }
+        };
+
+        await service.RegistrarVentaAsync(ventaPizzaCompleta);
+
+        var sfFinal = await context.InventarioStockFraccionados.FirstAsync();
+        sfFinal.StockFraccionesActual.Should().Be(40);
+        prodRebanada.StockActual.Should().Be(40);
+        prodPizza.StockActual.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task RegistrarVentaAsync_WhenProductStockIsZero_ThrowsInvalidOperationException()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+
+        var prod = await context.Productos.FirstAsync(p => p.CodigoBarras == "7501001");
+        prod.StockActual = 0;
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+        var dto = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    IdProducto = prod.IdProducto,
+                    Sku = "7501001",
+                    Nombre = "Palomitas Grandes",
+                    Cantidad = 1,
+                    Precio = 50.00m
+                }
+            }
+        };
+
+        Func<Task> act = async () => await service.RegistrarVentaAsync(dto);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*stock actual: 0*");
     }
 
     private class FakeHttpMessageHandler : HttpMessageHandler

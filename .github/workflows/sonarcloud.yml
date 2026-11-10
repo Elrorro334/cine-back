@@ -57,8 +57,8 @@ jobs:
             /d:sonar.host.url="https://sonarcloud.io" \
             /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
             /d:sonar.coverage.exclusions="**/Program.cs,**/Controllers/TestController.cs,**/Migrations/**" \
-            /d:sonar.cpd.exclusions="**/Migrations/**" \
-            /d:sonar.exclusions="**/Migrations/**"
+            /d:sonar.cpd.exclusions="**/Migrations/**,**/*.sql" \
+            /d:sonar.exclusions="**/Migrations/**,**/*.sql"
 
           dotnet build --configuration Release
 

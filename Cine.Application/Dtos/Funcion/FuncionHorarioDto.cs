@@ -1,4 +1,4 @@
-namespace Cine.Application.Dtos
+﻿namespace Cine.Application.Dtos.Funcion
 {
     public class FuncionHorarioDto
     {
@@ -9,7 +9,6 @@ namespace Cine.Application.Dtos
         public string Hora { get; set; } = string.Empty;
 
         public string NombreSala { get; set; } = string.Empty;
-
         public decimal Precio { get; set; }
     }
 }

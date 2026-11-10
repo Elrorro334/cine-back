@@ -1,5 +1,6 @@
 using cine_back.Controllers;
 using Cine.Application.Dtos;
+using Cine.Application.Dtos.Funcion;
 using Cine.Application.Interfaces;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
@@ -124,6 +125,123 @@ public class TaquillaControllerTests
     }
 
     [Fact]
+    public async Task GetCatalogoDulceriaPos_ReturnsOkWithCatalogo()
+    {
+        var catalogo = new CatalogoDulceriaPosDto
+        {
+            StockFraccionado = new StockFraccionadoDto
+            {
+                StockRebanadasActual = 56,
+                PizzasCompletasEquivalentes = 7,
+                EtiquetaMonitor = "Stock: 56 rebanadas (7 pizzas)"
+            },
+            SnacksYBebidas = new List<ProductoDto>
+            {
+                new ProductoDto { IdProducto = 1, Sku = "7501001", Nombre = "Palomitas Grandes", Precio = 50m, Stock = 40 }
+            }
+        };
+
+        _taquillaServiceMock.Setup(s => s.ObtenerCatalogoDulceriaPosAsync()).ReturnsAsync(catalogo);
+
+        var result = await _controller.GetCatalogoDulceriaPos();
+
+        var ok = result as OkObjectResult;
+        ok.Should().NotBeNull();
+        ok!.StatusCode.Should().Be(200);
+        ok.Value.Should().BeEquivalentTo(catalogo);
+    }
+
+    [Fact]
+    public async Task BuscarProductoPorSku_WhenFound_ReturnsOk()
+    {
+        var prod = new ProductoDto { IdProducto = 1, Sku = "7501001", Nombre = "Palomitas Grandes", Precio = 50m, Stock = 25 };
+        _taquillaServiceMock.Setup(s => s.BuscarProductoPorSkuAsync("7501001")).ReturnsAsync(prod);
+
+        var result = await _controller.BuscarProductoPorSku("7501001");
+
+        var ok = result as OkObjectResult;
+        ok.Should().NotBeNull();
+        ok!.StatusCode.Should().Be(200);
+        ok.Value.Should().BeEquivalentTo(prod);
+    }
+
+    [Fact]
+    public async Task BuscarProductoPorSku_WhenNotFound_ReturnsNotFound()
+    {
+        _taquillaServiceMock.Setup(s => s.BuscarProductoPorSkuAsync("0000000")).ReturnsAsync((ProductoDto?)null);
+
+        var result = await _controller.BuscarProductoPorSku("0000000");
+
+        var notFound = result as NotFoundObjectResult;
+        notFound.Should().NotBeNull();
+        notFound!.StatusCode.Should().Be(404);
+    }
+
+    [Fact]
+    public async Task BuscarProductoPorSku_WhenEmpty_ReturnsBadRequest()
+    {
+        _taquillaServiceMock.Setup(s => s.BuscarProductoPorSkuAsync(""))
+            .ThrowsAsync(new ArgumentException("SKU obligatorio"));
+
+        var result = await _controller.BuscarProductoPorSku("");
+
+        var badReq = result as BadRequestObjectResult;
+        badReq.Should().NotBeNull();
+        badReq!.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task BuscarProductoPorSku_WhenZeroStock_ReturnsConflict()
+    {
+        _taquillaServiceMock.Setup(s => s.BuscarProductoPorSkuAsync("7501001"))
+            .ThrowsAsync(new InvalidOperationException("Inventario 0"));
+
+        var result = await _controller.BuscarProductoPorSku("7501001");
+
+        var conflict = result as ConflictObjectResult;
+        conflict.Should().NotBeNull();
+        conflict!.StatusCode.Should().Be(409);
+    }
+
+    [Fact]
+    public async Task CalcularOrdenPos_WithValidRequest_ReturnsOk()
+    {
+        var req = new CalcularOrdenRequestDto { SkuAgregar = "7501001", CantidadAgregar = 1 };
+        var res = new ResumenOrdenCalculadoDto { TotalVenta = 50m, TotalArticulos = 1 };
+
+        _taquillaServiceMock.Setup(s => s.CalcularOrdenPosAsync(req)).ReturnsAsync(res);
+
+        var result = await _controller.CalcularOrdenPos(req);
+
+        var ok = result as OkObjectResult;
+        ok.Should().NotBeNull();
+        ok!.StatusCode.Should().Be(200);
+        ok.Value.Should().BeEquivalentTo(res);
+    }
+
+    [Fact]
+    public async Task CalcularOrdenPos_WhenThrowsExceptions_MapsExpectedHttpStatusCodes()
+    {
+        var reqBad = new CalcularOrdenRequestDto();
+        _taquillaServiceMock.Setup(s => s.CalcularOrdenPosAsync(reqBad))
+            .ThrowsAsync(new ArgumentException("Solicitud inválida"));
+        var badRes = await _controller.CalcularOrdenPos(reqBad);
+        (badRes as BadRequestObjectResult)!.StatusCode.Should().Be(400);
+
+        var reqNotFound = new CalcularOrdenRequestDto { SkuAgregar = "9999999" };
+        _taquillaServiceMock.Setup(s => s.CalcularOrdenPosAsync(reqNotFound))
+            .ThrowsAsync(new KeyNotFoundException("SKU no encontrado"));
+        var nfRes = await _controller.CalcularOrdenPos(reqNotFound);
+        (nfRes as NotFoundObjectResult)!.StatusCode.Should().Be(404);
+
+        var reqConflict = new CalcularOrdenRequestDto { SkuAgregar = "7501006", CantidadAgregar = 100 };
+        _taquillaServiceMock.Setup(s => s.CalcularOrdenPosAsync(reqConflict))
+            .ThrowsAsync(new InvalidOperationException("Stock fraccionado insuficiente"));
+        var confRes = await _controller.CalcularOrdenPos(reqConflict);
+        (confRes as ConflictObjectResult)!.StatusCode.Should().Be(409);
+    }
+
+    [Fact]
     public async Task RegistrarVenta_WithValidDto_ReturnsOk()
     {
         var req = new RegistrarVentaDto
@@ -167,6 +285,20 @@ public class TaquillaControllerTests
         var badReq = result as BadRequestObjectResult;
         badReq.Should().NotBeNull();
         badReq!.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task RegistrarVenta_WhenThrowsInvalidOperationException_ReturnsConflict()
+    {
+        var req = new RegistrarVentaDto();
+        _taquillaServiceMock.Setup(s => s.RegistrarVentaAsync(req))
+            .ThrowsAsync(new InvalidOperationException("La butaca A1 ya se encuentra ocupada"));
+
+        var result = await _controller.RegistrarVenta(req);
+
+        var conflict = result as ConflictObjectResult;
+        conflict.Should().NotBeNull();
+        conflict!.StatusCode.Should().Be(409);
     }
 
     [Fact]
