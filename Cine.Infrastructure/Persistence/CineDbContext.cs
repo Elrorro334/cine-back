@@ -57,6 +57,10 @@ public partial class CineDbContext : DbContext, ICineDbContext
 
     public virtual DbSet<FacturaProveedor> FacturasProveedor { get; set; }
 
+    public virtual DbSet<CanjePreorden> CanjePreordens { get; set; }
+
+    public virtual DbSet<PagoVenta> PagoVentas { get; set; }
+
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -541,6 +545,82 @@ public partial class CineDbContext : DbContext, ICineDbContext
                 .HasForeignKey(d => d.IdVendedor)
                 .OnDelete(DeleteBehavior.SetNull)
                 .HasConstraintName("FK_factura_vendedor");
+        });
+
+        modelBuilder.Entity<CanjePreorden>(entity =>
+        {
+            entity.HasKey(e => e.IdCanje).HasName("PK_canje_preorden");
+
+            entity.ToTable("canje_preorden");
+
+            entity.Property(e => e.IdCanje).HasColumnName("id_canje");
+            entity.Property(e => e.IdPreorden).HasColumnName("id_preorden");
+            entity.Property(e => e.IdVenta).HasColumnName("id_venta");
+            entity.Property(e => e.IdVendedor).HasColumnName("id_vendedor");
+            entity.Property(e => e.CodigoQr)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("codigo_qr");
+            entity.Property(e => e.FechaCanje).HasColumnName("fecha_canje");
+            entity.Property(e => e.MontoCanjeado)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("monto_canjeado");
+
+            entity.HasOne(d => d.IdPreordenNavigation).WithMany(p => p.CanjePreordens)
+                .HasForeignKey(d => d.IdPreorden)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_canje_preorden_preorden");
+
+            entity.HasOne(d => d.IdVentaNavigation).WithMany(p => p.CanjePreordens)
+                .HasForeignKey(d => d.IdVenta)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_canje_preorden_venta");
+
+            entity.HasOne(d => d.IdVendedorNavigation).WithMany()
+                .HasForeignKey(d => d.IdVendedor)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_canje_preorden_vendedor");
+        });
+
+        modelBuilder.Entity<PagoVenta>(entity =>
+        {
+            entity.HasKey(e => e.IdPago).HasName("PK_pago_venta");
+
+            entity.ToTable("pago_venta");
+
+            entity.Property(e => e.IdPago).HasColumnName("id_pago");
+            entity.Property(e => e.IdVenta).HasColumnName("id_venta");
+            entity.Property(e => e.MetodoPago)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("metodo_pago");
+            entity.Property(e => e.MontoTotal)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("monto_total");
+            entity.Property(e => e.MontoRecibido)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("monto_recibido");
+            entity.Property(e => e.Cambio)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("cambio");
+            entity.Property(e => e.FolioAutorizacion)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("folio_autorizacion");
+            entity.Property(e => e.CodigoBarrasTicket)
+                .HasMaxLength(30)
+                .IsUnicode(false)
+                .HasColumnName("codigo_barras_ticket");
+            entity.Property(e => e.RfcEmisor)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasColumnName("rfc_emisor");
+            entity.Property(e => e.FechaPago).HasColumnName("fecha_pago");
+
+            entity.HasOne(d => d.IdVentaNavigation).WithMany(p => p.PagoVentas)
+                .HasForeignKey(d => d.IdVenta)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_pago_venta_venta");
         });
 
         OnModelCreatingPartial(modelBuilder);

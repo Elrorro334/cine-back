@@ -44,12 +44,18 @@ public class RegistrarVentaItemDto
     public int Cantidad { get; set; }
     public decimal Precio { get; set; }
     public List<string>? Asientos { get; set; }
+    public string? NombreSala { get; set; }
+    public bool EsPreorden { get; set; }
+    public string? CodigoPreorden { get; set; }
 }
 
 public class RegistrarVentaDto
 {
     public int IdVendedor { get; set; }
     public string MetodoPago { get; set; } = "Efectivo";
+    public decimal? MontoRecibido { get; set; }
+    public string? FolioAutorizacion { get; set; }
+    public string? CodigoPreorden { get; set; }
     public List<RegistrarVentaItemDto> Items { get; set; } = new();
 }
 
@@ -59,12 +65,23 @@ public class VentaConfirmadaDto
     public string Folio { get; set; } = string.Empty;
     public decimal Total { get; set; }
     public string MetodoPago { get; set; } = string.Empty;
+    public decimal MontoRecibido { get; set; }
+    public decimal Cambio { get; set; }
+    public string? FolioAutorizacion { get; set; }
+    public string RfcCine { get; set; } = "CTX-260414-9X0";
+    public string NombreCine { get; set; } = "CINE TEATRO XILOTZIN";
+    public string DireccionCine { get; set; } = "JILOTEPEC, ESTADO DE MÉXICO";
+    public string TelefonoCine { get; set; } = "(55) 1234 5678";
+    public string CodigoBarrasTicket { get; set; } = string.Empty;
+    public string? CodigoPreordenCanjeada { get; set; }
     public DateTime FechaVenta { get; set; }
     public List<RegistrarVentaItemDto> Items { get; set; } = new();
 }
 
 public class PreordenComboDto
 {
+    public int? IdProducto { get; set; }
+    public string Sku { get; set; } = string.Empty;
     public string Nombre { get; set; } = string.Empty;
     public int Cantidad { get; set; }
     public decimal Precio { get; set; }
@@ -78,6 +95,7 @@ public class PreordenDto
     public string Telefono { get; set; } = string.Empty;
     public string Pelicula { get; set; } = string.Empty;
     public string Horario { get; set; } = string.Empty;
+    public string NombreSala { get; set; } = "Sala 1";
     public int IdFuncion { get; set; }
     public int BoletosGeneral { get; set; }
     public decimal PrecioBoleto { get; set; }
@@ -86,5 +104,9 @@ public class PreordenDto
     public decimal Total { get; set; }
     public string FechaCreacion { get; set; } = string.Empty;
     public int VigenciaDias { get; set; }
+    public int DiasTranscurridos { get; set; }
+    public bool Expirada { get; set; }
+    public bool Canjeada { get; set; }
+    public string? MotivoRechazo { get; set; }
     public bool EstadoActivo { get; set; }
 }

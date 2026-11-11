@@ -1,9 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace Cine.Domain.Entities
 {
-
     public partial class Preorden
     {
         public int IdPreorden { get; set; }
@@ -23,6 +22,8 @@ namespace Cine.Domain.Entities
         public virtual ICollection<DetallePreordenBoleto> DetallePreordenBoletos { get; set; } = new List<DetallePreordenBoleto>();
 
         public virtual ICollection<DetallePreordenDulcerium> DetallePreordenDulceria { get; set; } = new List<DetallePreordenDulcerium>();
+
+        public virtual ICollection<CanjePreorden> CanjePreordens { get; set; } = new List<CanjePreorden>();
 
         public virtual Cliente IdClienteNavigation { get; set; } = null!;
 
