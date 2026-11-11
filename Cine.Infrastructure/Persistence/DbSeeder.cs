@@ -18,10 +18,12 @@ public static class DbSeeder
         [2] = (5, 8), // Sala 2: A1..E8 = 40 butacas
     };
 
+    private const string CategoriaSnacks = "Snacks";
+
     private static readonly (string Nombre, string Descripcion)[] CategoriasBase =
     {
         ("Taquilla", "Boletos de acceso general a funciones"),
-        ("Snacks", "Botanas y alimentos de dulcería"),
+        (CategoriaSnacks, "Botanas y alimentos de dulcería"),
         ("Bebidas", "Refrescos y bebidas frías"),
         ("Pizzas", "Inventario fraccionado de pizzas y rebanadas")
     };
@@ -29,10 +31,10 @@ public static class DbSeeder
     private static readonly (string Sku, string Nombre, string Categoria, decimal Precio, decimal Costo, int Stock, int StockMin)[] ProductosBase =
     {
         ("BOL-GEN", "Boleto General", "Taquilla", 50.00m, 0.00m, 999, 10),
-        ("7501001", "Palomitas Grandes", "Snacks", 50.00m, 18.00m, 40, 10),
+        ("7501001", "Palomitas Grandes", CategoriaSnacks, 50.00m, 18.00m, 40, 10),
         ("7501002", "Refresco 600ml", "Bebidas", 35.00m, 14.00m, 50, 12),
-        ("7501003", "Nachos con Queso", "Snacks", 65.00m, 25.00m, 30, 8),
-        ("7501004", "Chips / Frituras", "Snacks", 25.00m, 10.00m, 35, 10),
+        ("7501003", "Nachos con Queso", CategoriaSnacks, 65.00m, 25.00m, 30, 8),
+        ("7501004", "Chips / Frituras", CategoriaSnacks, 25.00m, 10.00m, 35, 10),
         ("7501005", "Icee / Granizado", "Bebidas", 45.00m, 15.00m, 25, 8),
         ("7501006", "Rebanada Individual", "Pizzas", 35.00m, 12.00m, 56, 8),
         ("7501007", "Pizza Completa (8 Rebanadas)", "Pizzas", 180.00m, 85.00m, 7, 1)

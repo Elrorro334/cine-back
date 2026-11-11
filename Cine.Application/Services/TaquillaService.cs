@@ -19,6 +19,7 @@ public class TaquillaService : ITaquillaService
     private const string TipoDulceria = "dulceria";
     private const string TipoBoleto = "boleto";
     private const string TipoVideoTrailer = "Trailer";
+    private const string PropiedadResults = "results";
 
     private static readonly Dictionary<string, string> MapaCertificaciones = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -111,7 +112,7 @@ public class TaquillaService : ITaquillaService
             using var doc = JsonDocument.Parse(json);
 
             var resultados = new List<TmdbSearchResultDto>();
-            if (doc.RootElement.TryGetProperty("results", out var resultsElement) && resultsElement.ValueKind == JsonValueKind.Array)
+            if (doc.RootElement.TryGetProperty(PropiedadResults, out var resultsElement) && resultsElement.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in resultsElement.EnumerateArray())
                 {
@@ -292,7 +293,7 @@ public class TaquillaService : ITaquillaService
     private static string ExtraerClasificacion(JsonElement root)
     {
         if (!root.TryGetProperty("release_dates", out var rdProp) ||
-            !rdProp.TryGetProperty("results", out var rdResults) ||
+            !rdProp.TryGetProperty(PropiedadResults, out var rdResults) ||
             rdResults.ValueKind != JsonValueKind.Array)
         {
             return "B";
@@ -340,7 +341,7 @@ public class TaquillaService : ITaquillaService
     private static string? ExtraerTrailerKey(JsonElement root)
     {
         if (!root.TryGetProperty("videos", out var videosProp) ||
-            !videosProp.TryGetProperty("results", out var vidResults) ||
+            !videosProp.TryGetProperty(PropiedadResults, out var vidResults) ||
             vidResults.ValueKind != JsonValueKind.Array)
         {
             return null;
@@ -2062,7 +2063,7 @@ public class TaquillaService : ITaquillaService
 
         var searchJson = await searchResponse.Content.ReadAsStringAsync();
         using var searchDoc = JsonDocument.Parse(searchJson);
-        if (searchDoc.RootElement.TryGetProperty("results", out var results) && results.GetArrayLength() > 0)
+        if (searchDoc.RootElement.TryGetProperty(PropiedadResults, out var results) && results.GetArrayLength() > 0)
         {
             return results[0].GetProperty("id").GetInt32();
         }
@@ -2076,7 +2077,7 @@ public class TaquillaService : ITaquillaService
         var videosJson = videosResponse.IsSuccessStatusCode ? await videosResponse.Content.ReadAsStringAsync() : "{}";
         using var videosDoc = JsonDocument.Parse(videosJson);
 
-        if (!videosDoc.RootElement.TryGetProperty("results", out var vidArray) || vidArray.GetArrayLength() == 0)
+        if (!videosDoc.RootElement.TryGetProperty(PropiedadResults, out var vidArray) || vidArray.GetArrayLength() == 0)
         {
             return new List<TrailerItemDto>();
         }

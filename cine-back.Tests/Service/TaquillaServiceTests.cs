@@ -1354,7 +1354,7 @@ public class TaquillaServiceTests
     public async Task ValidarPreordenQrAsync_WhenQrExceeds12Days_ThrowsInvalidOperationException()
     {
         using var context = GetInMemoryDbContext();
-        var cliente = new Cliente { IdCliente = 1, Nombre = "Carlos Ruiz", NumeroTelefono = "5512345678" };
+        var cliente = new Cliente { IdCliente = 1, Nombre = "Carlos Ruiz", NumeroTelefono = "5512345678", Correo = "carlos@test.com" };
         var pelicula = new Pelicula { IdPelicula = 1, Titulo = "Venom", Sinopsis = "Sinopsis", Duracion = 110, Clasificacion = "B", Director = "Dir" };
         var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(17), Precio = 50m, IdPeliculaNavigation = pelicula };
         var preordenExpirada = new Preorden
@@ -1387,7 +1387,7 @@ public class TaquillaServiceTests
     public async Task ValidarPreordenQrAsync_WhenAlreadyRedeemed_ThrowsInvalidOperationException()
     {
         using var context = GetInMemoryDbContext();
-        var cliente = new Cliente { IdCliente = 1, Nombre = "Laura Gómez", NumeroTelefono = "5512345678" };
+        var cliente = new Cliente { IdCliente = 1, Nombre = "Laura Gómez", NumeroTelefono = "5512345678", Correo = "laura@test.com" };
         var pelicula = new Pelicula { IdPelicula = 1, Titulo = "Venom", Sinopsis = "Sinopsis", Duracion = 110, Clasificacion = "B", Director = "Dir" };
         var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(17), Precio = 50m, IdPeliculaNavigation = pelicula };
         var preordenCanjeada = new Preorden
@@ -1420,7 +1420,7 @@ public class TaquillaServiceTests
     public async Task ObtenerPreordenesActivasAsync_ReturnsOnlyActiveAndWithin12Days()
     {
         using var context = GetInMemoryDbContext();
-        var cliente = new Cliente { IdCliente = 1, Nombre = "Pedro", NumeroTelefono = "5512345678" };
+        var cliente = new Cliente { IdCliente = 1, Nombre = "Pedro", NumeroTelefono = "5512345678", Correo = "pedro@test.com" };
         var pelicula = new Pelicula { IdPelicula = 1, Titulo = "Gladiador II", Sinopsis = "Sinopsis", Duracion = 150, Clasificacion = "B15", Director = "Ridley" };
         var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(20), Precio = 50m, IdPeliculaNavigation = pelicula };
 
