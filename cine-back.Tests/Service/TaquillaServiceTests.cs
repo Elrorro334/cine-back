@@ -1674,7 +1674,8 @@ public class TaquillaServiceTests
 
         var pagoEnDb = await context.PagoVentas.FirstAsync(pv => pv.IdVenta == ticket.IdVenta);
         pagoEnDb.FolioAutorizacion.Should().Be("23423");
-      
+    }
+
     private static IConfiguration BuildTwilioConfig(
         string? accountSid = "ACTESTACCOUNT001",
         string? authToken = "test_auth_token_value",

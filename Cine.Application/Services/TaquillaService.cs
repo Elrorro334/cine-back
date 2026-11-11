@@ -23,6 +23,8 @@ public class TaquillaService : ITaquillaService
     private const string TipoBoleto = "boleto";
     private const string TipoVideoTrailer = "Trailer";
     private const string PropiedadResults = "results";
+    private const string HorarioPorDefecto = "16:00";
+    private const string FormatoHoraMinuto = "HH:mm";
 
     private static readonly Dictionary<string, string> MapaCertificaciones = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -517,7 +519,7 @@ public class TaquillaService : ITaquillaService
 
         if (listaHorarios.Count == 0)
         {
-            listaHorarios.Add("16:00");
+            listaHorarios.Add(HorarioPorDefecto);
         }
         return listaHorarios;
     }
@@ -753,7 +755,7 @@ public class TaquillaService : ITaquillaService
             IdSala = funcion.IdSala,
             NombreSala = funcion.IdSalaNavigation?.NombreSala ?? "Sala 1",
             PeliculaTitulo = pelicula?.Titulo ?? string.Empty,
-            Horario = funcion.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
+            Horario = funcion.HoraInicio.ToString(FormatoHoraMinuto, CultureInfo.InvariantCulture),
             Precio = funcion.Precio,
             Butacas = butacasDto
         };
@@ -1778,7 +1780,7 @@ public class TaquillaService : ITaquillaService
             Cliente = pre.IdClienteNavigation?.Nombre ?? "Cliente Xilotzin",
             Telefono = pre.IdClienteNavigation?.NumeroTelefono ?? "",
             Pelicula = pre.IdFuncionNavigation?.IdPeliculaNavigation?.Titulo ?? "Película",
-            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "16:00",
+            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString(FormatoHoraMinuto, CultureInfo.InvariantCulture) ?? HorarioPorDefecto,
             NombreSala = pre.IdFuncionNavigation?.IdSalaNavigation?.NombreSala ?? "Sala 1",
             IdFuncion = pre.IdFuncion,
             BoletosGeneral = boletosCantidad,
@@ -1794,9 +1796,6 @@ public class TaquillaService : ITaquillaService
             MotivoRechazo = ObtenerMotivoRechazoPreorden(yaCanjeada, expirada, diasTranscurridos),
             EstadoActivo = pre.EstadoActivo && !yaCanjeada && !expirada
         };
-
-        return MapPreordenToDto(pre, boletos, dulceria, codigoQr);
-
     }
 
     private static string? ObtenerMotivoRechazoPreorden(bool yaCanjeada, bool expirada, int diasTranscurridos)
@@ -1860,7 +1859,7 @@ public class TaquillaService : ITaquillaService
             Cliente = cliente.Nombre,
             Telefono = cliente.NumeroTelefono ?? telefonoLimpio,
             Pelicula = funcion.IdPeliculaNavigation?.Titulo ?? "Película",
-            Horario = funcion.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
+            Horario = funcion.HoraInicio.ToString(FormatoHoraMinuto, CultureInfo.InvariantCulture),
             IdFuncion = funcion.IdFuncion,
             BoletosGeneral = dto.Boletos,
             PrecioBoleto = precioBoleto,
@@ -2263,7 +2262,7 @@ public class TaquillaService : ITaquillaService
             Cliente = pre.IdClienteNavigation?.Nombre ?? "Cliente Xilotzin",
             Telefono = pre.IdClienteNavigation?.NumeroTelefono ?? "",
             Pelicula = pre.IdFuncionNavigation?.IdPeliculaNavigation?.Titulo ?? "Película",
-            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "16:00",
+            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString(FormatoHoraMinuto, CultureInfo.InvariantCulture) ?? HorarioPorDefecto,
             IdFuncion = pre.IdFuncion,
             BoletosGeneral = boletosCantidad,
             PrecioBoleto = precioBoleto,
