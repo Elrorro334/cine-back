@@ -18,6 +18,8 @@ namespace Cine.Application.Interfaces
         Task<ResumenOrdenCalculadoDto> CalcularOrdenPosAsync(CalcularOrdenRequestDto request);
         Task<VentaConfirmadaDto> RegistrarVentaAsync(RegistrarVentaDto dto);
         Task<PreordenDto?> ObtenerPreordenAsync(string codigoQr);
+        Task<PreordenDto> ValidarPreordenQrAsync(string codigoQr);
+        Task<List<PreordenDto>> ObtenerPreordenesActivasAsync();
         Task<PreordenDto> CrearPreordenAsync(CrearPreordenDto dto);
         Task<PeliculaTrailerDto?> ObtenerTrailerPeliculaAsync(int idPelicula);
     }

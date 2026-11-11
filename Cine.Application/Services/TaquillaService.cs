@@ -950,7 +950,10 @@ public class TaquillaService : ITaquillaService
                 Tipo = string.IsNullOrWhiteSpace(i.Tipo) ? TipoDulceria : i.Tipo,
                 Cantidad = i.Cantidad,
                 Precio = i.Precio,
-                Asientos = i.Asientos != null ? new List<string>(i.Asientos) : null
+                Asientos = i.Asientos != null ? new List<string>(i.Asientos) : null,
+                NombreSala = i.NombreSala,
+                EsPreorden = i.EsPreorden,
+                CodigoPreorden = i.CodigoPreorden
             })
             .ToList();
     }
@@ -987,6 +990,7 @@ public class TaquillaService : ITaquillaService
         }
 
         var existente = lineas.FirstOrDefault(l =>
+            !l.EsPreorden &&
             l.Tipo == TipoDulceria &&
             ((l.IdProducto.HasValue && l.IdProducto.Value == producto.IdProducto) ||
              (!string.IsNullOrWhiteSpace(l.Sku) && string.Equals(l.Sku, producto.Sku, StringComparison.OrdinalIgnoreCase))));
@@ -1160,7 +1164,10 @@ public class TaquillaService : ITaquillaService
                 Cantidad = linea.Cantidad,
                 PrecioUnitario = precioUnitario,
                 Subtotal = subtotalLinea,
-                Asientos = linea.Asientos
+                Asientos = linea.Asientos,
+                NombreSala = linea.NombreSala,
+                EsPreorden = linea.EsPreorden,
+                CodigoPreorden = linea.CodigoPreorden
             });
             idx++;
         }
@@ -1192,11 +1199,20 @@ public class TaquillaService : ITaquillaService
         await ValidarDisponibilidadDulceriaAsync(dto.Items);
 
         var totalCalculado = dto.Items.Sum(i => i.Precio * i.Cantidad);
-        var metodoNormalizado = string.IsNullOrWhiteSpace(dto.MetodoPago) ? "Efectivo" : dto.MetodoPago;
+        var metodoNormalizado = string.IsNullOrWhiteSpace(dto.MetodoPago) ? "Efectivo" : dto.MetodoPago.Trim();
+        var (montoRecibido, cambioCalculado) = ValidarYCalcularPago(dto, totalCalculado, metodoNormalizado);
+        var codigoPreorden = ExtraerCodigoPreorden(dto);
 
+        Preorden? preordenParaCanjear = null;
+        if (!string.IsNullOrWhiteSpace(codigoPreorden))
+        {
+            preordenParaCanjear = await ValidarPreordenParaVentaAsync(codigoPreorden);
+        }
+
+        var idVendedorFinal = dto.IdVendedor > 0 ? dto.IdVendedor : 1;
         var venta = new Ventum
         {
-            IdVendedor = dto.IdVendedor > 0 ? dto.IdVendedor : 1,
+            IdVendedor = idVendedorFinal,
             FechaVenta = DateTime.Now,
             Total = totalCalculado,
             MetodoPago = metodoNormalizado
@@ -1212,6 +1228,14 @@ public class TaquillaService : ITaquillaService
             await ProcesarItemVentaAsync(venta.IdVenta, item, productoBoleto);
         }
 
+        var codigoBarrasTicket = GenerarCodigoBarrasTicket(venta.IdVenta, venta.FechaVenta);
+        RegistrarPagoEnBd(venta, metodoNormalizado, montoRecibido, cambioCalculado, dto.FolioAutorizacion, codigoBarrasTicket);
+
+        if (preordenParaCanjear != null)
+        {
+            RegistrarCanjePreordenEnBd(preordenParaCanjear, venta.IdVenta, idVendedorFinal, totalCalculado);
+        }
+
         await _db.SaveChangesAsync();
 
         return new VentaConfirmadaDto
@@ -1220,9 +1244,115 @@ public class TaquillaService : ITaquillaService
             Folio = $"VT-{venta.IdVenta:D5}",
             Total = venta.Total,
             MetodoPago = metodoNormalizado,
+            MontoRecibido = montoRecibido,
+            Cambio = cambioCalculado,
+            FolioAutorizacion = dto.FolioAutorizacion,
+            RfcCine = "CTX-260414-9X0",
+            NombreCine = "CINE TEATRO XILOTZIN",
+            DireccionCine = "JILOTEPEC, ESTADO DE MÉXICO",
+            TelefonoCine = "(55) 1234 5678",
+            CodigoBarrasTicket = codigoBarrasTicket,
+            CodigoPreordenCanjeada = preordenParaCanjear?.CodigoQr ?? codigoPreorden,
             FechaVenta = venta.FechaVenta,
             Items = dto.Items
         };
+    }
+
+    private static (decimal MontoRecibido, decimal Cambio) ValidarYCalcularPago(
+        RegistrarVentaDto dto,
+        decimal totalCalculado,
+        string metodoNormalizado)
+    {
+        var esEfectivo = string.Equals(metodoNormalizado, "Efectivo", StringComparison.OrdinalIgnoreCase);
+
+        if (!esEfectivo && dto.FolioAutorizacion != null && string.IsNullOrWhiteSpace(dto.FolioAutorizacion))
+        {
+            throw new ArgumentException("El folio de autorización (voucher) de la terminal no puede estar vacío.");
+        }
+
+        var montoRecibido = dto.MontoRecibido ?? totalCalculado;
+
+        if (esEfectivo && dto.MontoRecibido.HasValue && dto.MontoRecibido.Value < totalCalculado)
+        {
+            throw new ArgumentException(
+                $"El efectivo recibido (${dto.MontoRecibido.Value:F2}) es menor al monto total a cobrar (${totalCalculado:F2}).");
+        }
+
+        var cambio = esEfectivo ? Math.Max(0m, montoRecibido - totalCalculado) : 0m;
+        return (montoRecibido, cambio);
+    }
+
+    private static string? ExtraerCodigoPreorden(RegistrarVentaDto dto)
+    {
+        if (!string.IsNullOrWhiteSpace(dto.CodigoPreorden))
+        {
+            return dto.CodigoPreorden.Trim().ToUpperInvariant();
+        }
+
+        var desdeItem = dto.Items.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.CodigoPreorden))?.CodigoPreorden;
+        return string.IsNullOrWhiteSpace(desdeItem) ? null : desdeItem.Trim().ToUpperInvariant();
+    }
+
+    private async Task<Preorden?> ValidarPreordenParaVentaAsync(string codigoPreorden)
+    {
+        var preorden = await _db.Preordens.FirstOrDefaultAsync(p => p.CodigoQr == codigoPreorden);
+        if (preorden == null) return null;
+
+        var yaCanjeada = !preorden.EstadoActivo ||
+                         await _db.CanjePreordens.AnyAsync(c => c.IdPreorden == preorden.IdPreorden);
+        if (yaCanjeada)
+        {
+            throw new InvalidOperationException($"El código QR '{codigoPreorden}' ya se encuentra marcado como Canjeado.");
+        }
+
+        var dias = Math.Max(0, (int)(DateTime.Today - preorden.FechaCreacion.Date).TotalDays);
+        if (dias > 12)
+        {
+            throw new InvalidOperationException($"El código QR '{codigoPreorden}' supera los 12 días de vigencia y ha expirado.");
+        }
+
+        return preorden;
+    }
+
+    private static string GenerarCodigoBarrasTicket(int idVenta, DateTime fechaVenta)
+    {
+        return $"75010{fechaVenta:MMdd}{idVenta:D4}";
+    }
+
+    private void RegistrarPagoEnBd(
+        Ventum venta,
+        string metodoNormalizado,
+        decimal montoRecibido,
+        decimal cambioCalculado,
+        string? folioAutorizacion,
+        string codigoBarrasTicket)
+    {
+        _db.PagoVentas.Add(new PagoVenta
+        {
+            IdVenta = venta.IdVenta,
+            MetodoPago = metodoNormalizado,
+            MontoTotal = venta.Total,
+            MontoRecibido = montoRecibido,
+            Cambio = cambioCalculado,
+            FolioAutorizacion = string.IsNullOrWhiteSpace(folioAutorizacion) ? null : folioAutorizacion.Trim(),
+            CodigoBarrasTicket = codigoBarrasTicket,
+            RfcEmisor = "CTX-260414-9X0",
+            FechaPago = venta.FechaVenta
+        });
+    }
+
+    private void RegistrarCanjePreordenEnBd(Preorden preorden, int idVenta, int idVendedor, decimal montoCanjeado)
+    {
+        preorden.EstadoActivo = false;
+        _db.CanjePreordens.Add(new CanjePreorden
+        {
+            IdPreorden = preorden.IdPreorden,
+            IdVenta = idVenta,
+            IdVendedor = idVendedor,
+            CodigoQr = preorden.CodigoQr ?? string.Empty,
+            FechaCanje = DateTime.Now,
+            MontoCanjeado = montoCanjeado
+        });
     }
 
     private async Task ValidarDisponibilidadDulceriaAsync(List<RegistrarVentaItemDto> items)
@@ -1530,13 +1660,77 @@ public class TaquillaService : ITaquillaService
     {
         if (string.IsNullOrWhiteSpace(codigoQr)) return null;
 
+        var codigoLimpio = codigoQr.Trim().ToUpperInvariant();
         var pre = await _db.Preordens
             .Include(p => p.IdClienteNavigation)
             .Include(p => p.IdFuncionNavigation.IdPeliculaNavigation)
-            .FirstOrDefaultAsync(p => p.CodigoQr == codigoQr);
+            .Include(p => p.IdFuncionNavigation.IdSalaNavigation)
+            .FirstOrDefaultAsync(p => p.CodigoQr != null && p.CodigoQr.ToUpper() == codigoLimpio);
 
         if (pre == null) return null;
 
+        return await ConstruirPreordenDtoAsync(pre, codigoLimpio);
+    }
+
+    public async Task<PreordenDto> ValidarPreordenQrAsync(string codigoQr)
+    {
+        if (string.IsNullOrWhiteSpace(codigoQr))
+        {
+            throw new ArgumentException("El código o folio QR es obligatorio.");
+        }
+
+        var preorden = await ObtenerPreordenAsync(codigoQr);
+        if (preorden == null)
+        {
+            throw new KeyNotFoundException($"No se encontró ninguna pre-orden con el folio '{codigoQr.Trim().ToUpperInvariant()}'.");
+        }
+
+        if (preorden.Canjeada)
+        {
+            throw new InvalidOperationException(
+                preorden.MotivoRechazo ?? "El código QR ya se encuentra marcado como Canjeado en la base de datos.");
+        }
+
+        if (preorden.Expirada)
+        {
+            throw new InvalidOperationException(
+                preorden.MotivoRechazo ?? "El código QR supera los 12 días de vigencia y ha expirado.");
+        }
+
+        if (preorden.BoletosGeneral <= 0)
+        {
+            throw new InvalidOperationException("La pre-orden no contiene boletos para canjear.");
+        }
+
+        return preorden;
+    }
+
+    public async Task<List<PreordenDto>> ObtenerPreordenesActivasAsync()
+    {
+        var preordenes = await _db.Preordens
+            .Include(p => p.IdClienteNavigation)
+            .Include(p => p.IdFuncionNavigation.IdPeliculaNavigation)
+            .Include(p => p.IdFuncionNavigation.IdSalaNavigation)
+            .Where(p => p.EstadoActivo)
+            .OrderByDescending(p => p.FechaCreacion)
+            .Take(20)
+            .ToListAsync();
+
+        var resultado = new List<PreordenDto>();
+        foreach (var pre in preordenes)
+        {
+            var dto = await ConstruirPreordenDtoAsync(pre, pre.CodigoQr ?? string.Empty);
+            if (dto.EstadoActivo && !dto.Canjeada && !dto.Expirada)
+            {
+                resultado.Add(dto);
+            }
+        }
+
+        return resultado;
+    }
+
+    private async Task<PreordenDto> ConstruirPreordenDtoAsync(Preorden pre, string codigoFallback)
+    {
         var boletos = await _db.DetallePreordenBoletos
             .Where(b => b.IdPreorden == pre.IdPreorden)
             .ToListAsync();
@@ -1552,31 +1746,51 @@ public class TaquillaService : ITaquillaService
 
         var combos = dulceria.Select(d => new PreordenComboDto
         {
+            IdProducto = d.IdProducto,
+            Sku = d.IdProductoNavigation?.CodigoBarras ?? string.Empty,
             Nombre = d.IdProductoNavigation?.Nombre ?? "Combo",
             Cantidad = d.Cantidad,
             Precio = d.IdProductoNavigation?.PrecioVenta ?? 0m
         }).ToList();
 
         var subtotalCombos = combos.Sum(c => c.Precio * c.Cantidad);
+        var diasTranscurridos = Math.Max(0, (int)(DateTime.Today - pre.FechaCreacion.Date).TotalDays);
+        var yaCanjeada = !pre.EstadoActivo ||
+                         await _db.CanjePreordens.AnyAsync(c => c.IdPreorden == pre.IdPreorden);
+        var expirada = diasTranscurridos > 12;
+
+        string? motivoRechazo = null;
+        if (yaCanjeada)
+        {
+            motivoRechazo = "El código QR ya fue canjeado anteriormente o se encuentra inactivo.";
+        }
+        else if (expirada)
+        {
+            motivoRechazo = $"El código QR supera los 12 días de vigencia ({diasTranscurridos} días transcurridos).";
+        }
 
         return new PreordenDto
         {
             IdPreorden = pre.IdPreorden,
-            Codigo = pre.CodigoQr ?? codigoQr,
+            Codigo = pre.CodigoQr ?? codigoFallback,
             Cliente = pre.IdClienteNavigation?.Nombre ?? "Cliente Xilotzin",
             Telefono = pre.IdClienteNavigation?.NumeroTelefono ?? "",
             Pelicula = pre.IdFuncionNavigation?.IdPeliculaNavigation?.Titulo ?? "Película",
             Horario = pre.IdFuncionNavigation?.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "16:00",
+            NombreSala = pre.IdFuncionNavigation?.IdSalaNavigation?.NombreSala ?? "Sala 1",
             IdFuncion = pre.IdFuncion,
             BoletosGeneral = boletosCantidad,
             PrecioBoleto = precioBoleto,
-            // La pre-orden no reserva butacas: se asignan en taquilla al canjear el QR (HU-06).
             Asientos = new List<string>(),
             Combos = combos,
             Total = subtotalBoletos + subtotalCombos,
             FechaCreacion = pre.FechaCreacion.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             VigenciaDias = pre.Vigencia,
-            EstadoActivo = pre.EstadoActivo
+            DiasTranscurridos = diasTranscurridos,
+            Expirada = expirada,
+            Canjeada = yaCanjeada,
+            MotivoRechazo = motivoRechazo,
+            EstadoActivo = pre.EstadoActivo && !yaCanjeada && !expirada
         };
     }
 

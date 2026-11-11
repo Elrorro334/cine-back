@@ -1346,6 +1346,284 @@ public class TaquillaServiceTests
             .WithMessage("*stock actual: 0*");
     }
 
+    // =========================================================================
+    // Pruebas Unitarias HU-08 (Lector Pre-Orden QR) y HU-09 (Cobro y Ticket)
+    // =========================================================================
+
+    [Fact]
+    public async Task ValidarPreordenQrAsync_WhenQrExceeds12Days_ThrowsInvalidOperationException()
+    {
+        using var context = GetInMemoryDbContext();
+        var cliente = new Cliente { IdCliente = 1, Nombre = "Carlos Ruiz", NumeroTelefono = "5512345678" };
+        var pelicula = new Pelicula { IdPelicula = 1, Titulo = "Venom", Sinopsis = "Sinopsis", Duracion = 110, Clasificacion = "B", Director = "Dir" };
+        var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(17), Precio = 50m, IdPeliculaNavigation = pelicula };
+        var preordenExpirada = new Preorden
+        {
+            IdPreorden = 1,
+            IdCliente = 1,
+            IdFuncion = 10,
+            FechaCreacion = DateTime.Today.AddDays(-13),
+            EstadoActivo = true,
+            Vigencia = 12,
+            CodigoQr = "PRE-XIL-EXP13",
+            IdClienteNavigation = cliente,
+            IdFuncionNavigation = funcion
+        };
+
+        context.Clientes.Add(cliente);
+        context.Peliculas.Add(pelicula);
+        context.Funcions.Add(funcion);
+        context.Preordens.Add(preordenExpirada);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+
+        Func<Task> act = async () => await service.ValidarPreordenQrAsync("PRE-XIL-EXP13");
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*12 días de vigencia*");
+    }
+
+    [Fact]
+    public async Task ValidarPreordenQrAsync_WhenAlreadyRedeemed_ThrowsInvalidOperationException()
+    {
+        using var context = GetInMemoryDbContext();
+        var cliente = new Cliente { IdCliente = 1, Nombre = "Laura Gómez", NumeroTelefono = "5512345678" };
+        var pelicula = new Pelicula { IdPelicula = 1, Titulo = "Venom", Sinopsis = "Sinopsis", Duracion = 110, Clasificacion = "B", Director = "Dir" };
+        var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(17), Precio = 50m, IdPeliculaNavigation = pelicula };
+        var preordenCanjeada = new Preorden
+        {
+            IdPreorden = 2,
+            IdCliente = 1,
+            IdFuncion = 10,
+            FechaCreacion = DateTime.Today.AddDays(-2),
+            EstadoActivo = false,
+            Vigencia = 12,
+            CodigoQr = "PRE-XIL-CANJE01",
+            IdClienteNavigation = cliente,
+            IdFuncionNavigation = funcion
+        };
+
+        context.Clientes.Add(cliente);
+        context.Peliculas.Add(pelicula);
+        context.Funcions.Add(funcion);
+        context.Preordens.Add(preordenCanjeada);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+
+        Func<Task> act = async () => await service.ValidarPreordenQrAsync("PRE-XIL-CANJE01");
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*ya fue canjeada*");
+    }
+
+    [Fact]
+    public async Task ObtenerPreordenesActivasAsync_ReturnsOnlyActiveAndWithin12Days()
+    {
+        using var context = GetInMemoryDbContext();
+        var cliente = new Cliente { IdCliente = 1, Nombre = "Pedro", NumeroTelefono = "5512345678" };
+        var pelicula = new Pelicula { IdPelicula = 1, Titulo = "Gladiador II", Sinopsis = "Sinopsis", Duracion = 150, Clasificacion = "B15", Director = "Ridley" };
+        var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(20), Precio = 50m, IdPeliculaNavigation = pelicula };
+
+        context.Clientes.Add(cliente);
+        context.Peliculas.Add(pelicula);
+        context.Funcions.Add(funcion);
+        context.Preordens.AddRange(
+            new Preorden { IdPreorden = 1, IdCliente = 1, IdFuncion = 10, FechaCreacion = DateTime.Today.AddDays(-3), EstadoActivo = true, Vigencia = 12, CodigoQr = "PRE-XIL-VIGENTE", IdClienteNavigation = cliente, IdFuncionNavigation = funcion },
+            new Preorden { IdPreorden = 2, IdCliente = 1, IdFuncion = 10, FechaCreacion = DateTime.Today.AddDays(-15), EstadoActivo = true, Vigencia = 12, CodigoQr = "PRE-XIL-VENCIDA", IdClienteNavigation = cliente, IdFuncionNavigation = funcion },
+            new Preorden { IdPreorden = 3, IdCliente = 1, IdFuncion = 10, FechaCreacion = DateTime.Today.AddDays(-1), EstadoActivo = false, Vigencia = 12, CodigoQr = "PRE-XIL-USADA", IdClienteNavigation = cliente, IdFuncionNavigation = funcion }
+        );
+        context.DetallePreordenBoletos.Add(new DetallePreordenBoleto { IdDetalle = 1, IdPreorden = 1, Caantidad = 2, Subtotal = 100m });
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+        var activas = await service.ObtenerPreordenesActivasAsync();
+
+        activas.Should().HaveCount(1);
+        activas[0].Codigo.Should().Be("PRE-XIL-VIGENTE");
+        activas[0].Expirada.Should().BeFalse();
+        activas[0].Canjeada.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CalcularOrdenPosAsync_PreservesPreordenItemsAndAllowsAddingExtraProducts()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        var req = new CalcularOrdenRequestDto
+        {
+            ItemsActuales = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    IdProducto = 1,
+                    Sku = "7501001",
+                    Nombre = "Palomitas Grandes (Pre-Orden)",
+                    Cantidad = 1,
+                    Precio = 50m,
+                    EsPreorden = true,
+                    CodigoPreorden = "PRE-XIL-84920"
+                }
+            },
+            SkuAgregar = "7501001", // Cliente pide unas Palomitas Grandes extra aparte de su pre-orden
+            CantidadAgregar = 1
+        };
+
+        var res = await service.CalcularOrdenPosAsync(req);
+
+        res.Items.Should().HaveCount(2, "la línea de pre-orden no debe fusionarse ni alterarse al agregar productos extra");
+        res.Items.Count(i => i.EsPreorden).Should().Be(1);
+        res.Items.Count(i => !i.EsPreorden).Should().Be(1);
+        res.TotalVenta.Should().Be(100m);
+    }
+
+    [Fact]
+    public async Task RegistrarVentaAsync_WithCashAndPreorden_CalculatesChangePersistsPagoAndMarksPreordenRedeemed()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+
+        var sala = new Sala { IdSala = 1, NombreSala = "Sala 1", CapacidadTotal = 48, TipoPantalla = "2D" };
+        var pelicula = new Pelicula { IdPelicula = 1, Titulo = "Terrifier 3", Sinopsis = "Sinopsis", Duracion = 120, Clasificacion = "C", Director = "Damien" };
+        var funcion = new Funcion { IdFuncion = 10, IdPelicula = 1, IdSala = 1, FechaFuncion = DateTime.Today, HoraInicio = DateTime.Today.AddHours(12).AddMinutes(30), Precio = 50m, IdSalaNavigation = sala, IdPeliculaNavigation = pelicula };
+        var b1 = new Butaca { IdButaca = 1, IdSala = 1, Fila = "C", Numero = 1 };
+        var preorden = new Preorden
+        {
+            IdPreorden = 50,
+            IdFuncion = 10,
+            FechaCreacion = DateTime.Today,
+            EstadoActivo = true,
+            Vigencia = 12,
+            CodigoQr = "PRE-XIL-84920"
+        };
+
+        context.Salas.Add(sala);
+        context.Peliculas.Add(pelicula);
+        context.Funcions.Add(funcion);
+        context.Butacas.Add(b1);
+        context.Preordens.Add(preorden);
+        await context.SaveChangesAsync();
+
+        var service = new TaquillaService(context);
+        var dto = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            MontoRecibido = 200m,
+            CodigoPreorden = "PRE-XIL-84920",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "boleto",
+                    IdFuncion = 10,
+                    Nombre = "Terrifier 3 (12:30)",
+                    Cantidad = 1,
+                    Precio = 50m,
+                    Asientos = new List<string> { "C1" },
+                    EsPreorden = true,
+                    CodigoPreorden = "PRE-XIL-84920"
+                },
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    Sku = "7501003",
+                    Nombre = "Nachos con Queso",
+                    Cantidad = 1,
+                    Precio = 65m
+                }
+            }
+        };
+
+        var ticket = await service.RegistrarVentaAsync(dto);
+
+        ticket.Should().NotBeNull();
+        ticket.Total.Should().Be(115m);
+        ticket.MontoRecibido.Should().Be(200m);
+        ticket.Cambio.Should().Be(85m);
+        ticket.RfcCine.Should().Be("CTX-260414-9X0");
+        ticket.CodigoBarrasTicket.Should().StartWith("75010");
+        ticket.CodigoPreordenCanjeada.Should().Be("PRE-XIL-84920");
+
+        var preordenEnDb = await context.Preordens.FirstAsync(p => p.IdPreorden == 50);
+        preordenEnDb.EstadoActivo.Should().BeFalse("la pre-orden debe quedar marcada como canjeada");
+
+        var canjeEnDb = await context.CanjePreordens.FirstOrDefaultAsync(c => c.IdPreorden == 50);
+        canjeEnDb.Should().NotBeNull();
+        canjeEnDb!.CodigoQr.Should().Be("PRE-XIL-84920");
+
+        var pagoEnDb = await context.PagoVentas.FirstOrDefaultAsync(pv => pv.IdVenta == ticket.IdVenta);
+        pagoEnDb.Should().NotBeNull();
+        pagoEnDb!.Cambio.Should().Be(85m);
+    }
+
+    [Fact]
+    public async Task RegistrarVentaAsync_WhenInsufficientCash_ThrowsArgumentException()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        var dto = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Efectivo",
+            MontoRecibido = 40m,
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    Sku = "7501001",
+                    Nombre = "Palomitas Grandes",
+                    Cantidad = 1,
+                    Precio = 50m
+                }
+            }
+        };
+
+        Func<Task> act = async () => await service.RegistrarVentaAsync(dto);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*efectivo recibido*menor al monto total*");
+    }
+
+    [Fact]
+    public async Task RegistrarVentaAsync_WithMercadoPagoVoucher_PersistsVoucherAndZeroChange()
+    {
+        using var context = GetInMemoryDbContext();
+        await DbSeeder.SeedDulceriaAsync(context);
+        var service = new TaquillaService(context);
+
+        var dto = new RegistrarVentaDto
+        {
+            IdVendedor = 1,
+            MetodoPago = "Tarjeta Mercado Pago",
+            FolioAutorizacion = "23423",
+            Items = new List<RegistrarVentaItemDto>
+            {
+                new RegistrarVentaItemDto
+                {
+                    Tipo = "dulceria",
+                    Sku = "7501001",
+                    Nombre = "Palomitas Grandes",
+                    Cantidad = 1,
+                    Precio = 50m
+                }
+            }
+        };
+
+        var ticket = await service.RegistrarVentaAsync(dto);
+
+        ticket.Total.Should().Be(50m);
+        ticket.Cambio.Should().Be(0m);
+        ticket.FolioAutorizacion.Should().Be("23423");
+
+        var pagoEnDb = await context.PagoVentas.FirstAsync(pv => pv.IdVenta == ticket.IdVenta);
+        pagoEnDb.FolioAutorizacion.Should().Be("23423");
+    }
+
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler;
