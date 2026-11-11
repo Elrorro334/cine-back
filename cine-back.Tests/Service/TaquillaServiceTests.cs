@@ -1413,7 +1413,7 @@ public class TaquillaServiceTests
 
         Func<Task> act = async () => await service.ValidarPreordenQrAsync("PRE-XIL-CANJE01");
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*ya fue canjeada*");
+            .WithMessage("*ya fue canjeado*");
     }
 
     [Fact]
