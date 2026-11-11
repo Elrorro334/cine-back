@@ -1775,19 +1775,33 @@ public class TaquillaService : ITaquillaService
         var preordenes = await _db.Preordens
             .Include(p => p.IdClienteNavigation)
             .Include(p => p.IdFuncionNavigation.IdPeliculaNavigation)
-            .Include(p => p.DetallePreordenBoletos)
-            .Include(p => p.DetallePreordenDulceria)
-                .ThenInclude(d => d.IdProductoNavigation)
             .Where(p => p.IdClienteNavigation.NumeroTelefono == telefonoLimpio)
             .OrderByDescending(p => p.FechaCreacion)
             .ThenByDescending(p => p.IdPreorden)
             .ToListAsync();
 
+        var preordenIds = preordenes.Select(p => p.IdPreorden).ToList();
+        if (preordenIds.Count == 0)
+        {
+            return new List<PreordenDto>();
+        }
+
+        var boletosPorPreorden = (await _db.DetallePreordenBoletos
+            .Where(b => preordenIds.Contains(b.IdPreorden))
+            .ToListAsync())
+            .ToLookup(b => b.IdPreorden);
+
+        var dulceriaPorPreorden = (await _db.DetallePreordenDulceria
+            .Include(d => d.IdProductoNavigation)
+            .Where(d => preordenIds.Contains(d.IdPreorden))
+            .ToListAsync())
+            .ToLookup(d => d.IdPreorden);
+
         return preordenes
             .Select(p => MapPreordenToDto(
                 p,
-                p.DetallePreordenBoletos,
-                p.DetallePreordenDulceria,
+                boletosPorPreorden[p.IdPreorden],
+                dulceriaPorPreorden[p.IdPreorden],
                 p.CodigoQr ?? string.Empty))
             .ToList();
     }
@@ -1931,7 +1945,7 @@ public class TaquillaService : ITaquillaService
             telefonoLimpio = telefonoLimpio.Substring(2);
         }
 
-        if (telefonoLimpio.Length != 10 || !telefonoLimpio.All(char.IsDigit) || telefonoLimpio.StartsWith("0") || telefonoLimpio.StartsWith("1"))
+        if (telefonoLimpio.Length != 10 || !telefonoLimpio.All(char.IsDigit) || telefonoLimpio.StartsWith('0') || telefonoLimpio.StartsWith('1'))
         {
             throw new ArgumentException("El teléfono debe contener 10 dígitos válidos de México (ej. 7731234567 o 5512345678).");
         }

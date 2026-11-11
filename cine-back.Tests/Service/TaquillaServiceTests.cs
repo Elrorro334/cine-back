@@ -1670,6 +1670,11 @@ public class TaquillaServiceTests
         var exNotFound = await Assert.ThrowsAsync<ArgumentException>(() => service.VerificarCodigoRecuperacionAsync(
             new VerificarCodigoPreordenDto { Telefono = "7731234567", Codigo = "112233" }));
         exNotFound.Message.Should().Contain("expiró");
+
+        store.SaveCode("7739998877", "445566", TimeSpan.FromMinutes(10));
+        var emptyTickets = await service.VerificarCodigoRecuperacionAsync(
+            new VerificarCodigoPreordenDto { Telefono = "7739998877", Codigo = "445566" });
+        emptyTickets.Should().BeEmpty();
     }
 
     private class FakeHttpMessageHandler : HttpMessageHandler
