@@ -1,4 +1,5 @@
 using Cine.Application.Dtos;
+using Cine.Application.Exceptions;
 using Cine.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -123,6 +124,46 @@ public class CarteleraController : ControllerBase
         catch (ArgumentException ex)
         {
             return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    // Endpoint público HU-03: solicitar código OTP por SMS (Twilio) para recuperar pre-órdenes
+    [AllowAnonymous]
+    [HttpPost("preordenes/solicitar-codigo")]
+    public async Task<IActionResult> SolicitarCodigoPreordenes([FromBody] SolicitarCodigoPreordenDto dto)
+    {
+        try
+        {
+            var response = await _taquillaService.SolicitarCodigoRecuperacionAsync(dto);
+            return Ok(response);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message, message = ex.Message });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message, message = ex.Message });
+        }
+        catch (TwilioSmsException ex)
+        {
+            return StatusCode(ex.StatusCode, new { error = ex.Message, message = ex.Message });
+        }
+    }
+
+    // Endpoint público HU-03: verificar código OTP recibido por SMS y obtener pre-órdenes del teléfono
+    [AllowAnonymous]
+    [HttpPost("preordenes/verificar-codigo")]
+    public async Task<IActionResult> VerificarCodigoPreordenes([FromBody] VerificarCodigoPreordenDto dto)
+    {
+        try
+        {
+            var preordenes = await _taquillaService.VerificarCodigoRecuperacionAsync(dto);
+            return Ok(preordenes);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message, message = ex.Message });
         }
     }
 }

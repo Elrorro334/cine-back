@@ -1,5 +1,6 @@
 using cine_back.Controllers;
 using Cine.Application.Dtos;
+using Cine.Application.Exceptions;
 using Cine.Application.Interfaces;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
@@ -324,5 +325,104 @@ public class CarteleraControllerTests
         var notFoundResult = result as NotFoundObjectResult;
         notFoundResult.Should().NotBeNull();
         notFoundResult!.StatusCode.Should().Be(404);
+    }
+
+    [Fact]
+    public async Task SolicitarCodigoPreordenes_WhenValid_ReturnsOk()
+    {
+        var dto = new SolicitarCodigoPreordenDto { Telefono = "7731234567" };
+        var expected = new SolicitarCodigoPreordenResponseDto
+        {
+            Enviado = true,
+            TelefonoEnmascarado = "******4567",
+            ExpiraEnMinutos = 10,
+            Message = "Código enviado"
+        };
+
+        _taquillaServiceMock.Setup(s => s.SolicitarCodigoRecuperacionAsync(dto))
+            .ReturnsAsync(expected);
+
+        var result = await _controller.SolicitarCodigoPreordenes(dto);
+
+        var ok = result as OkObjectResult;
+        ok.Should().NotBeNull();
+        ok!.StatusCode.Should().Be(200);
+        (ok.Value as SolicitarCodigoPreordenResponseDto)!.Enviado.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SolicitarCodigoPreordenes_WhenInvalidPhone_ReturnsBadRequest()
+    {
+        var dto = new SolicitarCodigoPreordenDto { Telefono = "123" };
+        _taquillaServiceMock.Setup(s => s.SolicitarCodigoRecuperacionAsync(dto))
+            .ThrowsAsync(new ArgumentException("Teléfono inválido"));
+
+        var result = await _controller.SolicitarCodigoPreordenes(dto);
+
+        var bad = result as BadRequestObjectResult;
+        bad.Should().NotBeNull();
+        bad!.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task SolicitarCodigoPreordenes_WhenNoPreorders_ReturnsNotFound()
+    {
+        var dto = new SolicitarCodigoPreordenDto { Telefono = "7731234567" };
+        _taquillaServiceMock.Setup(s => s.SolicitarCodigoRecuperacionAsync(dto))
+            .ThrowsAsync(new KeyNotFoundException("Sin preórdenes"));
+
+        var result = await _controller.SolicitarCodigoPreordenes(dto);
+
+        var notFound = result as NotFoundObjectResult;
+        notFound.Should().NotBeNull();
+        notFound!.StatusCode.Should().Be(404);
+    }
+
+    [Fact]
+    public async Task SolicitarCodigoPreordenes_WhenTwilioSmsException_ReturnsExactStatusCode()
+    {
+        var dto = new SolicitarCodigoPreordenDto { Telefono = "7731234567" };
+        _taquillaServiceMock.Setup(s => s.SolicitarCodigoRecuperacionAsync(dto))
+            .ThrowsAsync(new TwilioSmsException("Rate limit", 429));
+
+        var result = await _controller.SolicitarCodigoPreordenes(dto);
+
+        var obj = result as ObjectResult;
+        obj.Should().NotBeNull();
+        obj!.StatusCode.Should().Be(429);
+    }
+
+    [Fact]
+    public async Task VerificarCodigoPreordenes_WhenValid_ReturnsOkWithPreordenes()
+    {
+        var dto = new VerificarCodigoPreordenDto { Telefono = "7731234567", Codigo = "123456" };
+        var lista = new List<PreordenDto>
+        {
+            new PreordenDto { IdPreorden = 1, Codigo = "PRE-XIL-12345", Pelicula = "Dune" }
+        };
+
+        _taquillaServiceMock.Setup(s => s.VerificarCodigoRecuperacionAsync(dto))
+            .ReturnsAsync(lista);
+
+        var result = await _controller.VerificarCodigoPreordenes(dto);
+
+        var ok = result as OkObjectResult;
+        ok.Should().NotBeNull();
+        ok!.StatusCode.Should().Be(200);
+        (ok.Value as List<PreordenDto>)!.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task VerificarCodigoPreordenes_WhenInvalidCode_ReturnsBadRequest()
+    {
+        var dto = new VerificarCodigoPreordenDto { Telefono = "7731234567", Codigo = "000" };
+        _taquillaServiceMock.Setup(s => s.VerificarCodigoRecuperacionAsync(dto))
+            .ThrowsAsync(new ArgumentException("Código inválido"));
+
+        var result = await _controller.VerificarCodigoPreordenes(dto);
+
+        var bad = result as BadRequestObjectResult;
+        bad.Should().NotBeNull();
+        bad!.StatusCode.Should().Be(400);
     }
 }
