@@ -1,8 +1,11 @@
 using System.Security.Cryptography;
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using Cine.Application.Dtos;
+using Cine.Application.Exceptions;
 using Cine.Application.Interfaces;
 using Cine.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -51,12 +54,20 @@ public class TaquillaService : ITaquillaService
 
     private readonly ICineDbContext _db;
     private readonly HttpClient _httpClient;
+    private readonly IConfiguration? _config;
+    private readonly IOtpCodeStore _otpStore;
     private readonly string _tmdbApiKey;
 
-    public TaquillaService(ICineDbContext context, HttpClient? httpClient = null, IConfiguration? config = null)
+    public TaquillaService(
+        ICineDbContext context,
+        HttpClient? httpClient = null,
+        IConfiguration? config = null,
+        IOtpCodeStore? otpStore = null)
     {
         _db = context;
         _httpClient = httpClient ?? new HttpClient();
+        _config = config;
+        _otpStore = otpStore ?? new InMemoryOtpCodeStore();
         _tmdbApiKey = config?["Tmdb:ApiKey"] ?? "a9b90184f1235d3b78c24e4b31e993b8";
     }
 
@@ -1783,6 +1794,9 @@ public class TaquillaService : ITaquillaService
             MotivoRechazo = ObtenerMotivoRechazoPreorden(yaCanjeada, expirada, diasTranscurridos),
             EstadoActivo = pre.EstadoActivo && !yaCanjeada && !expirada
         };
+
+        return MapPreordenToDto(pre, boletos, dulceria, codigoQr);
+
     }
 
     private static string? ObtenerMotivoRechazoPreorden(bool yaCanjeada, bool expirada, int diasTranscurridos)
@@ -1882,11 +1896,7 @@ public class TaquillaService : ITaquillaService
             throw new ArgumentException("El nombre del cliente debe tener al menos 3 caracteres.");
         }
 
-        var telefonoLimpio = dto.TelefonoCliente?.Trim().Replace(" ", "").Replace("-", "") ?? string.Empty;
-        if (telefonoLimpio.Length != 10 || !telefonoLimpio.StartsWith("55") || !telefonoLimpio.All(char.IsDigit))
-        {
-            throw new ArgumentException("El teléfono debe contener exactamente 10 dígitos e iniciar con 55 (ej. 5512345678).");
-        }
+        var telefonoLimpio = NormalizarTelefonoMexicano(dto.TelefonoCliente);
 
         return (nombreLimpio, telefonoLimpio);
     }
@@ -1959,6 +1969,312 @@ public class TaquillaService : ITaquillaService
         }
 
         return (combosList, subtotalCombos);
+    }
+
+    public async Task<SolicitarCodigoPreordenResponseDto> SolicitarCodigoRecuperacionAsync(SolicitarCodigoPreordenDto dto)
+    {
+        if (dto == null)
+        {
+            throw new ArgumentException("El número de teléfono es obligatorio.");
+        }
+
+        var telefonoLimpio = NormalizarTelefonoMexicano(dto.Telefono);
+
+        var tienePreordenes = await _db.Preordens
+            .AnyAsync(p => p.IdClienteNavigation.NumeroTelefono == telefonoLimpio);
+
+        if (!tienePreordenes)
+        {
+            throw new KeyNotFoundException("No encontramos pre-órdenes registradas con este número de teléfono.");
+        }
+
+        if (_otpStore.TryGetCooldownSeconds(telefonoLimpio, out var waitSeconds))
+        {
+            throw new TwilioSmsException(
+                $"Ya enviamos un código recientemente. Espera {waitSeconds} segundos antes de solicitar uno nuevo.",
+                429
+            );
+        }
+
+        var codigo = RandomNumberGenerator.GetInt32(100000, 1000000).ToString(CultureInfo.InvariantCulture);
+        const int expiraMinutos = 10;
+        _otpStore.SaveCode(telefonoLimpio, codigo, TimeSpan.FromMinutes(expiraMinutos));
+
+        try
+        {
+            await EnviarSmsTwilioAsync(telefonoLimpio, codigo);
+        }
+        catch
+        {
+            _otpStore.RemoveCode(telefonoLimpio);
+            throw;
+        }
+
+        var enmascarado = EnmascararTelefono(telefonoLimpio);
+        return new SolicitarCodigoPreordenResponseDto
+        {
+            Enviado = true,
+            TelefonoEnmascarado = enmascarado,
+            ExpiraEnMinutos = expiraMinutos,
+            Message = $"Enviamos un código de 6 dígitos por SMS al +52 {enmascarado}."
+        };
+    }
+
+    public async Task<List<PreordenDto>> VerificarCodigoRecuperacionAsync(VerificarCodigoPreordenDto dto)
+    {
+        if (dto == null)
+        {
+            throw new ArgumentException("Los datos de verificación son obligatorios.");
+        }
+
+        var telefonoLimpio = NormalizarTelefonoMexicano(dto.Telefono);
+        var codigoLimpio = dto.Codigo?.Trim().Replace(" ", "").Replace("-", "") ?? string.Empty;
+
+        if (codigoLimpio.Length != 6 || !codigoLimpio.All(char.IsDigit))
+        {
+            throw new ArgumentException("Ingresa el código de verificación de 6 dígitos.");
+        }
+
+        var validacion = _otpStore.ValidateCode(telefonoLimpio, codigoLimpio);
+        if (validacion.Status == OtpValidationStatus.NotFoundOrExpired)
+        {
+            throw new ArgumentException("El código expiró o no ha sido solicitado. Solicita un código nuevo.");
+        }
+        if (validacion.Status == OtpValidationStatus.TooManyAttempts)
+        {
+            throw new ArgumentException("Superaste el máximo de intentos permitidos. Solicita un código nuevo.");
+        }
+        if (validacion.Status == OtpValidationStatus.InvalidCode)
+        {
+            throw new ArgumentException($"El código ingresado es incorrecto. Te quedan {validacion.RemainingAttempts} intento(s).");
+        }
+
+        var preordenes = await _db.Preordens
+            .Include(p => p.IdClienteNavigation)
+            .Include(p => p.IdFuncionNavigation.IdPeliculaNavigation)
+            .Where(p => p.IdClienteNavigation.NumeroTelefono == telefonoLimpio)
+            .OrderByDescending(p => p.FechaCreacion)
+            .ThenByDescending(p => p.IdPreorden)
+            .ToListAsync();
+
+        var preordenIds = preordenes.Select(p => p.IdPreorden).ToList();
+        if (preordenIds.Count == 0)
+        {
+            return new List<PreordenDto>();
+        }
+
+        var boletosPorPreorden = (await _db.DetallePreordenBoletos
+            .Where(b => preordenIds.Contains(b.IdPreorden))
+            .ToListAsync())
+            .ToLookup(b => b.IdPreorden);
+
+        var dulceriaPorPreorden = (await _db.DetallePreordenDulceria
+            .Include(d => d.IdProductoNavigation)
+            .Where(d => preordenIds.Contains(d.IdPreorden))
+            .ToListAsync())
+            .ToLookup(d => d.IdPreorden);
+
+        return preordenes
+            .Select(p => MapPreordenToDto(
+                p,
+                boletosPorPreorden[p.IdPreorden],
+                dulceriaPorPreorden[p.IdPreorden],
+                p.CodigoQr ?? string.Empty))
+            .ToList();
+    }
+
+    private async Task EnviarSmsTwilioAsync(string telefono10Digitos, string codigo)
+    {
+        var accountSid = _config?["Twilio:AccountSid"]?.Trim() ?? string.Empty;
+        var authToken = _config?["Twilio:AuthToken"]?.Trim() ?? string.Empty;
+        var fromNumber = _config?["Twilio:FromNumber"]?.Trim() ?? string.Empty;
+        var messagingServiceSid = _config?["Twilio:MessagingServiceSid"]?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrEmpty(accountSid) ||
+            string.IsNullOrEmpty(authToken) ||
+            (string.IsNullOrEmpty(fromNumber) && string.IsNullOrEmpty(messagingServiceSid)))
+        {
+            throw new TwilioSmsException(
+                "El servicio de envío por SMS (Twilio) aún no está configurado en el servidor.",
+                503
+            );
+        }
+
+        if (!accountSid.All(c => char.IsLetterOrDigit(c) || c == '_'))
+        {
+            throw new TwilioSmsException("Configuración de Twilio inválida en el servidor.", 503);
+        }
+
+        var formFields = new List<KeyValuePair<string, string>>
+        {
+            new("To", $"+52{telefono10Digitos}"),
+            new("Body", $"Cine Xilotzin: Tu codigo de verificacion para ver tus tickets es {codigo}. Valido por 10 minutos.")
+        };
+
+        if (!string.IsNullOrEmpty(messagingServiceSid))
+        {
+            formFields.Add(new("MessagingServiceSid", messagingServiceSid));
+        }
+        else
+        {
+            formFields.Add(new("From", fromNumber));
+        }
+
+        var requestUri = $"https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Messages.json";
+        using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
+        {
+            Content = new FormUrlEncodedContent(formFields)
+        };
+
+        var authBytes = Encoding.ASCII.GetBytes($"{accountSid}:{authToken}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(request);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            throw new TwilioSmsException(
+                "No se pudo conectar con el proveedor de SMS en este momento. Intenta de nuevo.",
+                502
+            );
+        }
+
+        using (response)
+        {
+            if (response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            var responseBody = await response.Content.ReadAsStringAsync();
+            throw BuildTwilioErrorException((int)response.StatusCode, responseBody);
+        }
+    }
+
+    private static TwilioSmsException BuildTwilioErrorException(int httpStatusCode, string responseBody)
+    {
+        if (httpStatusCode == 401 || httpStatusCode == 403)
+        {
+            return new TwilioSmsException("Las credenciales de Twilio configuradas en el servidor son inválidas.", 503);
+        }
+
+        var twilioCode = TryExtractTwilioErrorCode(responseBody);
+        if (twilioCode == 21608)
+        {
+            return new TwilioSmsException(
+                "La cuenta de envío SMS está en modo prueba (Trial) y este número aún no está verificado en Twilio Console.",
+                400
+            );
+        }
+        if (twilioCode == 21211 || twilioCode == 21614)
+        {
+            return new TwilioSmsException("El número de teléfono no es válido para recibir SMS.", 400);
+        }
+        if (twilioCode == 21408)
+        {
+            return new TwilioSmsException("La región México (+52) aún no está habilitada para SMS en Twilio.", 503);
+        }
+
+        return new TwilioSmsException("No fue posible enviar el código SMS en este momento. Intenta de nuevo más tarde.", 502);
+    }
+
+    private static int? TryExtractTwilioErrorCode(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            if (doc.RootElement.TryGetProperty("code", out var codeElement) && codeElement.TryGetInt32(out var code))
+            {
+                return code;
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static string NormalizarTelefonoMexicano(string? telefonoRaw)
+    {
+        var telefonoLimpio = telefonoRaw?.Trim()
+            .Replace(" ", "")
+            .Replace("-", "")
+            .Replace("+", "")
+            .Replace("(", "")
+            .Replace(")", "") ?? string.Empty;
+
+        if (telefonoLimpio.StartsWith("521") && telefonoLimpio.Length == 13)
+        {
+            telefonoLimpio = telefonoLimpio.Substring(3);
+        }
+        else if (telefonoLimpio.StartsWith("52") && telefonoLimpio.Length == 12)
+        {
+            telefonoLimpio = telefonoLimpio.Substring(2);
+        }
+
+        if (telefonoLimpio.Length != 10 || !telefonoLimpio.All(char.IsDigit) || telefonoLimpio.StartsWith('0') || telefonoLimpio.StartsWith('1'))
+        {
+            throw new ArgumentException("El teléfono debe contener 10 dígitos válidos de México (ej. 7731234567 o 5512345678).");
+        }
+
+        return telefonoLimpio;
+    }
+
+    private static string EnmascararTelefono(string telefono10Digitos)
+    {
+        return telefono10Digitos.Length >= 4
+            ? $"******{telefono10Digitos[^4..]}"
+            : "******";
+    }
+
+    private static PreordenDto MapPreordenToDto(
+        Preorden pre,
+        IEnumerable<DetallePreordenBoleto> boletos,
+        IEnumerable<DetallePreordenDulcerium> dulceria,
+        string fallbackCodigo)
+    {
+        var boletosCantidad = boletos.Sum(b => b.Caantidad);
+        var precioBoleto = pre.IdFuncionNavigation?.Precio ?? 50m;
+        var subtotalBoletos = boletosCantidad * precioBoleto;
+
+        var combos = dulceria.Select(d => new PreordenComboDto
+        {
+            Nombre = d.IdProductoNavigation?.Nombre ?? "Combo",
+            Cantidad = d.Cantidad,
+            Precio = d.IdProductoNavigation?.PrecioVenta ?? 0m
+        }).ToList();
+
+        var subtotalCombos = combos.Sum(c => c.Precio * c.Cantidad);
+
+        return new PreordenDto
+        {
+            IdPreorden = pre.IdPreorden,
+            Codigo = pre.CodigoQr ?? fallbackCodigo,
+            Cliente = pre.IdClienteNavigation?.Nombre ?? "Cliente Xilotzin",
+            Telefono = pre.IdClienteNavigation?.NumeroTelefono ?? "",
+            Pelicula = pre.IdFuncionNavigation?.IdPeliculaNavigation?.Titulo ?? "Película",
+            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "16:00",
+            IdFuncion = pre.IdFuncion,
+            BoletosGeneral = boletosCantidad,
+            PrecioBoleto = precioBoleto,
+            // La pre-orden no reserva butacas: se asignan en taquilla al canjear el QR (HU-06).
+            Asientos = new List<string>(),
+            Combos = combos,
+            Total = subtotalBoletos + subtotalCombos,
+            FechaCreacion = pre.FechaCreacion.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            VigenciaDias = pre.Vigencia,
+            EstadoActivo = pre.EstadoActivo
+        };
     }
 
     private static readonly ConcurrentDictionary<int, PeliculaTrailerDto> _trailersCache = new();

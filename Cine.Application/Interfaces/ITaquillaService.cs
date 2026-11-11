@@ -21,6 +21,8 @@ namespace Cine.Application.Interfaces
         Task<PreordenDto> ValidarPreordenQrAsync(string codigoQr);
         Task<List<PreordenDto>> ObtenerPreordenesActivasAsync();
         Task<PreordenDto> CrearPreordenAsync(CrearPreordenDto dto);
+        Task<SolicitarCodigoPreordenResponseDto> SolicitarCodigoRecuperacionAsync(SolicitarCodigoPreordenDto dto);
+        Task<List<PreordenDto>> VerificarCodigoRecuperacionAsync(VerificarCodigoPreordenDto dto);
         Task<PeliculaTrailerDto?> ObtenerTrailerPeliculaAsync(int idPelicula);
     }
 }
