@@ -1,4 +1,4 @@
-﻿using cine_back.Controllers;
+using cine_back.Controllers;
 using Cine.Application.Dtos;
 using Cine.Application.Interfaces;
 using FluentAssertions;
@@ -124,6 +124,26 @@ public class AuthControllerTests
         var badRequestResult = result.Result as BadRequestObjectResult;
         badRequestResult.Should().NotBeNull();
         badRequestResult!.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task Login_WhenCajeroIsOutsideSchedule_Returns403Forbidden()
+    {
+        var request = new LoginRequestDto { NombreUsuario = "Raul", Password = "123" };
+        var mockResponse = new LoginResponseDto
+        {
+            Success = false,
+            Message = "Acceso fuera de horario laboral autorizado"
+        };
+
+        _authServiceMock.Setup(s => s.LoginAsync(It.IsAny<LoginRequestDto>(), It.IsAny<string>()))
+            .ReturnsAsync(mockResponse);
+
+        var result = await _controller.Login(request);
+
+        var forbiddenResult = result.Result as ObjectResult;
+        forbiddenResult.Should().NotBeNull();
+        forbiddenResult!.StatusCode.Should().Be(403);
     }
 
     [Fact]

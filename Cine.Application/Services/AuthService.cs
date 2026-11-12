@@ -1,76 +1,92 @@
 using Cine.Domain.Entities;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
 using Cine.Application.Interfaces;
 using Cine.Application.Dtos;
+using Cine.Application.Helpers;
 using Microsoft.EntityFrameworkCore;
-using System.Net;
-using System.Net.Sockets;
 
 namespace Cine.Application.Services
 {
     public class AuthService : IAuthService
     {
+        private const string RolAdministrador = "Administrador";
+        private const string RolAdminCorto = "Admin";
+        private const string RolVendedor = "Vendedor";
+        private const string RolCajero = "Cajero";
+        private const string MensajeCredencialesInvalidas = "Usuario o contraseña incorrectos.";
+        private const string MensajeFueraDeHorario = "Acceso fuera de horario laboral autorizado";
+
         private readonly ICineDbContext _db;
         private readonly IConfiguration _config;
+        private readonly ICineClock _clock;
 
         public AuthService(ICineDbContext db, IConfiguration configuration)
+            : this(db, configuration, new MexicoCityClock())
+        {
+        }
+
+        [ActivatorUtilitiesConstructor]
+        public AuthService(ICineDbContext db, IConfiguration configuration, ICineClock clock)
         {
             _db = db;
             _config = configuration;
-
+            _clock = clock;
         }
 
         public async Task<NetworkCheckResponseDto> CheckNetworkAsync(string clientIp)
         {
-            clientIp = ResolveClientIp(clientIp);
+            string rawNormalized = IpAddressHelper.NormalizeIp(clientIp);
+            string resolvedIp = IpAddressHelper.ResolveLocalAdapterIfLoopback(rawNormalized);
 
-            bool isAuthorized = await _db.RedesAutorizadas
-                .AnyAsync(r => r.DireccionIp == clientIp);
+            var configSeguridad = await _db.ConfiguracionesSeguridad
+                .AsNoTracking()
+                .OrderByDescending(c => c.FechaUltimaModificacion)
+                .FirstOrDefaultAsync();
+
+            bool isAuthorized = await ValidarIpAutorizadaAsync(configSeguridad, rawNormalized, resolvedIp);
 
             if (!isAuthorized)
             {
                 return new NetworkCheckResponseDto
                 {
                     IsAllowed = false,
-                    IpDetected = clientIp,
-                    Message = $"BLOQUEO POR RESTRICCION DE RED (IP EXTERNA). IP detectada: {clientIp}"
+                    IpDetected = resolvedIp,
+                    Message = $"BLOQUEO POR RESTRICCION DE RED (IP EXTERNA). IP detectada: {resolvedIp}"
                 };
             }
 
             return new NetworkCheckResponseDto
             {
                 IsAllowed = true,
-                IpDetected = clientIp,
+                IpDetected = resolvedIp,
                 Message = "Red Autorizada (Red Local del Cine)"
             };
         }
 
         public async Task<LoginResponseDto> LoginAsync(LoginRequestDto request, string clientIp)
         {
-            // 1. Resolver IP si viene de Swagger (localhost)
-            clientIp = ResolveClientIp(clientIp);
+            string rawNormalized = IpAddressHelper.NormalizeIp(clientIp);
+            string resolvedIp = IpAddressHelper.ResolveLocalAdapterIfLoopback(rawNormalized);
 
-            // ====================================================================
-            // PARCHE INTELIGENTE: Usuario administrador de rescate (Autodestructible)
-            // ====================================================================
-            // Verificamos si ya existe algún usuario con rol "Admin" activo en la BD
+            // Usuario administrador de rescate (autodestructible cuando existe admin real en BD)
             bool existeAdminReal = await _db.Vendedors
-                .AnyAsync(v => v.IdRolNavigation.NombreRol == "Admin" && v.EstadoActivo);
+                .AnyAsync(v => (v.IdRolNavigation.NombreRol == RolAdminCorto ||
+                                v.IdRolNavigation.NombreRol == RolAdministrador) && v.EstadoActivo);
 
-            // Si NO hay admins reales, permitimos el acceso con la cuenta temporal
             if (!existeAdminReal && request.NombreUsuario == "admin" && request.Password == "admin123")
             {
-                var adminDummy = new Cine.Domain.Entities.Vendedor
+                var adminDummy = new Vendedor
                 {
                     IdVendedor = 1,
                     Nombre = "Administrador Supremo",
                     EstadoActivo = true
                 };
-                string tokenAdmin = GenerarTokenJwt(adminDummy, "Admin");
+                string tokenAdmin = GenerarTokenJwt(adminDummy, RolAdminCorto);
 
                 return new LoginResponseDto
                 {
@@ -78,52 +94,36 @@ namespace Cine.Application.Services
                     Message = "Inicio de sesión exitoso (Admin de rescate habilitado).",
                     IdVendedor = 0,
                     Nombre = "Administrador Supremo",
-                    Rol = "Admin",
+                    Rol = RolAdminCorto,
                     Token = tokenAdmin
                 };
             }
-            // ====================================================================
 
-            // 2. Buscar al vendedor por nombre en la Base de Datos
             var vendedor = await _db.Vendedors
                 .Include(v => v.IdRolNavigation)
                 .FirstOrDefaultAsync(v => v.Nombre == request.NombreUsuario && v.EstadoActivo);
 
-            if (vendedor == null)
+            if (vendedor == null || !BCrypt.Net.BCrypt.Verify(request.Password, vendedor.PasswordHash))
             {
                 return new LoginResponseDto
                 {
                     Success = false,
-                    Message = "Usuario o contraseña incorrectos."
+                    Message = MensajeCredencialesInvalidas
                 };
             }
 
-            // 3. PRIMERO: Comparar contraseña encriptada (Seguridad básica)
-            bool isPasswordValid = BCrypt.Net.BCrypt.Verify(request.Password, vendedor.PasswordHash);
-
-            if (!isPasswordValid)
-            {
-                return new LoginResponseDto
-                {
-                    Success = false,
-                    Message = "Usuario o contraseña incorrectos."
-                };
-            }
-
-            // 4. SEGUNDO: Verificar restricción de IP de la HU-04 SOLAMENTE para el rol Vendedor
-            bool isLocalIp = await _db.RedesAutorizadas.AnyAsync(r => r.DireccionIp == clientIp);
             string nombreRol = vendedor.IdRolNavigation?.NombreRol ?? string.Empty;
 
-            if (nombreRol.Equals("Vendedor", StringComparison.OrdinalIgnoreCase) && !isLocalIp)
+            // Regla 1 (Bypass Admin): Omitir todas las restricciones de IP y horario
+            if (!EsRolAdministrador(nombreRol) && EsRolOperativoRestringido(nombreRol))
             {
-                return new LoginResponseDto
+                var rechazoOperativo = await ValidarAccesoOperativoAsync(rawNormalized, resolvedIp);
+                if (rechazoOperativo != null)
                 {
-                    Success = false,
-                    Message = $"El rol Vendedor solo tiene autorización de operar conectado a la red local del cine. IP detectada: {clientIp}."
-                };
+                    return rechazoOperativo;
+                }
             }
 
-            // Usar el rol dinámico obtenido de la base de datos
             string tokenGenerado = GenerarTokenJwt(vendedor, nombreRol);
 
             return new LoginResponseDto
@@ -132,44 +132,90 @@ namespace Cine.Application.Services
                 Message = "Inicio de sesión exitoso.",
                 IdVendedor = vendedor.IdVendedor,
                 Nombre = vendedor.Nombre,
-                Rol = nombreRol, 
+                Rol = nombreRol,
                 Token = tokenGenerado
             };
         }
 
-        /// Resuelve dinámicamente la IP física del adaptador de red (solo para entorno de desarrollo local).
-        /// Permite que las pruebas en Swagger (localhost / ::1) sean validadas contra la BD.
-        private static string ResolveClientIp(string clientIp)
+        private async Task<LoginResponseDto?> ValidarAccesoOperativoAsync(string rawNormalized, string resolvedIp)
         {
-            // Si la petición viene de la misma máquina, buscamos la IP del adaptador de red que empiece con 192.168.
-            // (Esto evita que tome IPs virtuales de Docker/WSL2 tipo 172.x.x.x)
-            if (clientIp == "::1" || clientIp == "127.0.0.1")
+            var configSeguridad = await _db.ConfiguracionesSeguridad
+                .AsNoTracking()
+                .OrderByDescending(c => c.FechaUltimaModificacion)
+                .FirstOrDefaultAsync();
+
+            // Regla 2 (Validación IP Cajero / Vendedor)
+            bool isLocalIp = await ValidarIpAutorizadaAsync(configSeguridad, rawNormalized, resolvedIp);
+            if (!isLocalIp)
             {
-                try
+                return new LoginResponseDto
                 {
-                    var host = Dns.GetHostEntry(Dns.GetHostName());
-                    foreach (var ip in host.AddressList)
+                    Success = false,
+                    Message = $"Bloqueo por restricción de red: El rol Vendedor solo tiene autorización de operar conectado a la red local del cine. IP detectada: {resolvedIp}."
+                };
+            }
+
+            // Regla 3 (Validación Horario Cajero / Vendedor y Excepción de Horas Extras)
+            if (configSeguridad != null && !configSeguridad.AutorizarExcepcionHorasExtras)
+            {
+                var horaActual = _clock.GetLocalTimeOfDay();
+                if (!EstaDentroDeHorario(horaActual, configSeguridad.HorarioInicioCajeros, configSeguridad.HorarioFinCajeros))
+                {
+                    return new LoginResponseDto
                     {
-                        if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
-                        {
-                            string ipStr = ip.ToString();
-                            // Priorizar la red local estándar si existe
-                            if (ipStr.StartsWith("192.168."))
-                            {
-                                return ipStr;
-                            }
-                        }
-                    }
-                }
-                catch
-                {
-                    // Ignorar errores de resolución DNS
+                        Success = false,
+                        Message = MensajeFueraDeHorario
+                    };
                 }
             }
 
-            return clientIp;
+            return null;
         }
-        //metodo de token 
+
+        private async Task<bool> ValidarIpAutorizadaAsync(
+            ConfiguracionSeguridad? configSeguridad,
+            string rawNormalized,
+            string resolvedIp)
+        {
+            if (configSeguridad != null)
+            {
+                return IpAddressHelper.AreSameIp(resolvedIp, configSeguridad.IpAutorizada) ||
+                       IpAddressHelper.AreSameIp(rawNormalized, configSeguridad.IpAutorizada);
+            }
+
+            var redes = await _db.RedesAutorizadas
+                .AsNoTracking()
+                .Select(r => r.DireccionIp)
+                .ToListAsync();
+
+            return redes.Any(ip =>
+                IpAddressHelper.AreSameIp(resolvedIp, ip) ||
+                IpAddressHelper.AreSameIp(rawNormalized, ip));
+        }
+
+        private static bool EsRolAdministrador(string nombreRol)
+        {
+            return nombreRol.Equals(RolAdministrador, StringComparison.OrdinalIgnoreCase) ||
+                   nombreRol.Equals(RolAdminCorto, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool EsRolOperativoRestringido(string nombreRol)
+        {
+            return nombreRol.Equals(RolVendedor, StringComparison.OrdinalIgnoreCase) ||
+                   nombreRol.Equals(RolCajero, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool EstaDentroDeHorario(TimeSpan actual, TimeSpan inicio, TimeSpan fin)
+        {
+            if (inicio <= fin)
+            {
+                return actual >= inicio && actual <= fin;
+            }
+
+            // Soporte para horarios nocturnos que cruzan la medianoche (ej. 18:00 - 02:00)
+            return actual >= inicio || actual <= fin;
+        }
+
         private string GenerarTokenJwt(Vendedor vendedor, string nombreRol)
         {
             var secretKey = _config["Jwt:Key"];
@@ -185,10 +231,10 @@ namespace Cine.Application.Services
             {
                 Subject = new ClaimsIdentity(new[]
                 {
-            new Claim(ClaimTypes.NameIdentifier, vendedor.IdVendedor.ToString()),
-            new Claim(ClaimTypes.Name, vendedor.Nombre),
-            new Claim(ClaimTypes.Role, nombreRol)
-        }),
+                    new Claim(ClaimTypes.NameIdentifier, vendedor.IdVendedor.ToString()),
+                    new Claim(ClaimTypes.Name, vendedor.Nombre),
+                    new Claim(ClaimTypes.Role, nombreRol)
+                }),
                 Expires = DateTime.UtcNow.AddHours(8),
                 Issuer = _config["Jwt:Issuer"],
                 Audience = _config["Jwt:Audience"],
@@ -202,4 +248,3 @@ namespace Cine.Application.Services
         }
     }
 }
-

@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Cine.Application.Dtos;
+using Cine.Application.Interfaces;
 using Cine.Application.Services;
+using Moq;
 using Cine.Domain.Entities;
 using Cine.Infrastructure.Persistence;
 using FluentAssertions;
@@ -351,6 +353,213 @@ public class AuthServiceTests
         // Assert
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*JWT*");
+    }
+
+    [Fact]
+    public async Task LoginAsync_WhenRolAdministrador_BypassesIpAndScheduleRestrictions()
+    {
+        using var context = CreateInMemoryDbContext();
+        var sucursal = new Sucursal { Id = 1, Nombre = "Matriz", IpDefecto = "192.168.1.100" };
+        context.Sucursales.Add(sucursal);
+        context.ConfiguracionesSeguridad.Add(new ConfiguracionSeguridad
+        {
+            Id = 1,
+            SucursalId = 1,
+            IpAutorizada = "192.168.1.200",
+            HorarioInicioCajeros = new TimeSpan(8, 0, 0),
+            HorarioFinCajeros = new TimeSpan(23, 0, 0),
+            AutorizarExcepcionHorasExtras = false,
+            FechaUltimaModificacion = DateTime.Now,
+            UsuarioModificoId = 1
+        });
+        var rolAdmin = new Rol { IdRol = 1, NombreRol = "Administrador", Descripcion = "Admin" };
+        context.Rols.Add(rolAdmin);
+        context.Vendedors.Add(new Vendedor
+        {
+            IdVendedor = 10,
+            Nombre = "AdminGeneral",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("AdminPass123"),
+            EstadoActivo = true,
+            FechaCreacion = DateTime.UtcNow,
+            IdRol = 1,
+            IdRolNavigation = rolAdmin
+        });
+        await context.SaveChangesAsync();
+
+        var clockMock = new Mock<ICineClock>();
+        clockMock.Setup(c => c.GetLocalTimeOfDay()).Returns(new TimeSpan(23, 45, 0));
+
+        var service = new AuthService(context, CreateConfiguration(), clockMock.Object);
+
+        var result = await service.LoginAsync(
+            new LoginRequestDto { NombreUsuario = "AdminGeneral", Password = "AdminPass123" },
+            "200.50.10.5");
+
+        result.Success.Should().BeTrue();
+        result.Rol.Should().Be("Administrador");
+        result.Token.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task LoginAsync_WhenConfiguracionSeguridadIpUpdated_ValidatesCajeroImmediatelyAgainstNewIp()
+    {
+        using var context = CreateInMemoryDbContext();
+        var sucursal = new Sucursal { Id = 1, Nombre = "Matriz", IpDefecto = "192.168.1.100" };
+        context.Sucursales.Add(sucursal);
+        context.ConfiguracionesSeguridad.Add(new ConfiguracionSeguridad
+        {
+            Id = 1,
+            SucursalId = 1,
+            IpAutorizada = "192.168.1.200",
+            HorarioInicioCajeros = new TimeSpan(8, 0, 0),
+            HorarioFinCajeros = new TimeSpan(23, 0, 0),
+            AutorizarExcepcionHorasExtras = false,
+            FechaUltimaModificacion = DateTime.Now,
+            UsuarioModificoId = 1
+        });
+        var rolCajero = new Rol { IdRol = 2, NombreRol = "Cajero", Descripcion = "Cajero" };
+        context.Rols.Add(rolCajero);
+        context.Vendedors.Add(new Vendedor
+        {
+            IdVendedor = 20,
+            Nombre = "Cajero1",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("Pass123"),
+            EstadoActivo = true,
+            FechaCreacion = DateTime.UtcNow,
+            IdRol = 2,
+            IdRolNavigation = rolCajero
+        });
+        await context.SaveChangesAsync();
+
+        var clockMock = new Mock<ICineClock>();
+        clockMock.Setup(c => c.GetLocalTimeOfDay()).Returns(new TimeSpan(14, 0, 0));
+        var service = new AuthService(context, CreateConfiguration(), clockMock.Object);
+
+        var blockedOldIp = await service.LoginAsync(
+            new LoginRequestDto { NombreUsuario = "Cajero1", Password = "Pass123" },
+            "192.168.1.100");
+        blockedOldIp.Success.Should().BeFalse();
+        blockedOldIp.Message.Should().Contain("Bloqueo por restricción de red");
+
+        var allowedNewIp = await service.LoginAsync(
+            new LoginRequestDto { NombreUsuario = "Cajero1", Password = "Pass123" },
+            "192.168.1.200");
+        allowedNewIp.Success.Should().BeTrue();
+        allowedNewIp.Token.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task LoginAsync_WhenCajeroAt2330AndNoExtraHours_ReturnsAccesoFueraDeHorario()
+    {
+        using var context = CreateInMemoryDbContext();
+        var sucursal = new Sucursal { Id = 1, Nombre = "Matriz", IpDefecto = "192.168.1.200" };
+        context.Sucursales.Add(sucursal);
+        context.ConfiguracionesSeguridad.Add(new ConfiguracionSeguridad
+        {
+            Id = 1,
+            SucursalId = 1,
+            IpAutorizada = "192.168.1.200",
+            HorarioInicioCajeros = new TimeSpan(8, 0, 0),
+            HorarioFinCajeros = new TimeSpan(23, 0, 0),
+            AutorizarExcepcionHorasExtras = false,
+            FechaUltimaModificacion = DateTime.Now,
+            UsuarioModificoId = 1
+        });
+        var rolCajero = new Rol { IdRol = 2, NombreRol = "Cajero", Descripcion = "Cajero" };
+        context.Rols.Add(rolCajero);
+        context.Vendedors.Add(new Vendedor
+        {
+            IdVendedor = 21,
+            Nombre = "CajeroNoche",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("Pass123"),
+            EstadoActivo = true,
+            FechaCreacion = DateTime.UtcNow,
+            IdRol = 2,
+            IdRolNavigation = rolCajero
+        });
+        await context.SaveChangesAsync();
+
+        var clockMock = new Mock<ICineClock>();
+        clockMock.Setup(c => c.GetLocalTimeOfDay()).Returns(new TimeSpan(23, 30, 0));
+        var service = new AuthService(context, CreateConfiguration(), clockMock.Object);
+
+        var result = await service.LoginAsync(
+            new LoginRequestDto { NombreUsuario = "CajeroNoche", Password = "Pass123" },
+            "192.168.1.200");
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().Be("Acceso fuera de horario laboral autorizado");
+    }
+
+    [Fact]
+    public async Task LoginAsync_WhenCajeroAt2330AndExtraHoursEnabled_GrantsAccess()
+    {
+        using var context = CreateInMemoryDbContext();
+        var sucursal = new Sucursal { Id = 1, Nombre = "Matriz", IpDefecto = "192.168.1.200" };
+        context.Sucursales.Add(sucursal);
+        context.ConfiguracionesSeguridad.Add(new ConfiguracionSeguridad
+        {
+            Id = 1,
+            SucursalId = 1,
+            IpAutorizada = "192.168.1.200",
+            HorarioInicioCajeros = new TimeSpan(8, 0, 0),
+            HorarioFinCajeros = new TimeSpan(23, 0, 0),
+            AutorizarExcepcionHorasExtras = true,
+            FechaUltimaModificacion = DateTime.Now,
+            UsuarioModificoId = 1
+        });
+        var rolCajero = new Rol { IdRol = 2, NombreRol = "Cajero", Descripcion = "Cajero" };
+        context.Rols.Add(rolCajero);
+        context.Vendedors.Add(new Vendedor
+        {
+            IdVendedor = 22,
+            Nombre = "CajeroExtra",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("Pass123"),
+            EstadoActivo = true,
+            FechaCreacion = DateTime.UtcNow,
+            IdRol = 2,
+            IdRolNavigation = rolCajero
+        });
+        await context.SaveChangesAsync();
+
+        var clockMock = new Mock<ICineClock>();
+        clockMock.Setup(c => c.GetLocalTimeOfDay()).Returns(new TimeSpan(23, 30, 0));
+        var service = new AuthService(context, CreateConfiguration(), clockMock.Object);
+
+        var result = await service.LoginAsync(
+            new LoginRequestDto { NombreUsuario = "CajeroExtra", Password = "Pass123" },
+            "192.168.1.200");
+
+        result.Success.Should().BeTrue();
+        result.Token.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task CheckNetworkAsync_WhenConfiguracionSeguridadExists_ValidatesAgainstConfiguredIp()
+    {
+        using var context = CreateInMemoryDbContext();
+        var sucursal = new Sucursal { Id = 1, Nombre = "Matriz", IpDefecto = "192.168.1.200" };
+        context.Sucursales.Add(sucursal);
+        context.ConfiguracionesSeguridad.Add(new ConfiguracionSeguridad
+        {
+            Id = 1,
+            SucursalId = 1,
+            IpAutorizada = "192.168.1.200",
+            HorarioInicioCajeros = new TimeSpan(8, 0, 0),
+            HorarioFinCajeros = new TimeSpan(23, 0, 0),
+            AutorizarExcepcionHorasExtras = false,
+            FechaUltimaModificacion = DateTime.Now,
+            UsuarioModificoId = 1
+        });
+        await context.SaveChangesAsync();
+
+        var service = new AuthService(context, CreateConfiguration());
+
+        var allowed = await service.CheckNetworkAsync("192.168.1.200");
+        var denied = await service.CheckNetworkAsync("192.168.1.100");
+
+        allowed.IsAllowed.Should().BeTrue();
+        denied.IsAllowed.Should().BeFalse();
     }
 
     [Fact]

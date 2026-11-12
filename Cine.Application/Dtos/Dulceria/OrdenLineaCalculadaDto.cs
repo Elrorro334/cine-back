@@ -13,4 +13,7 @@ public class OrdenLineaCalculadaDto
     public decimal PrecioUnitario { get; set; }
     public decimal Subtotal { get; set; }
     public List<string>? Asientos { get; set; }
+    public string? NombreSala { get; set; }
+    public bool EsPreorden { get; set; }
+    public string? CodigoPreorden { get; set; }
 }
