@@ -24,7 +24,7 @@ public class InventarioController : ControllerBase
 
     /// <summary>
     /// Tabla 1: Obtiene el Inventario Maestro de Insumos con las 8 columnas requeridas y alertas de desabasto.
-    /// Excluye Taquilla y Combos; mapea categorías a Snacks, Bebidas, Dulces y Comida.
+    /// Excluye Taquilla y Combos; mapea categorías a Snacks, Bebidas, Dulces, Comida y Pizzas.
     /// </summary>
     [HttpGet("insumos")]
     public async Task<ActionResult<List<InsumoInventarioDto>>> GetInsumos(
@@ -32,6 +32,33 @@ public class InventarioController : ControllerBase
         [FromQuery] string? busqueda = null)
     {
         var resultado = await _inventarioService.ObtenerInventarioMaestroAsync(categoria, busqueda);
+        return Ok(resultado);
+    }
+
+    /// <summary>
+    /// Obtiene el Inventario Maestro paginado (15 registros por página por defecto),
+    /// con búsqueda acento-insensible, filtro de estado de stock y ordenamiento en servidor.
+    /// </summary>
+    [HttpGet("insumos/paginado")]
+    public async Task<ActionResult<InventarioPaginadoDto>> GetInsumosPaginado(
+        [FromQuery] string? categoria = null,
+        [FromQuery] string? busqueda = null,
+        [FromQuery] string? estadoStock = null,
+        [FromQuery] string? ordenarPor = null,
+        [FromQuery] int pagina = 1,
+        [FromQuery] int tamanoPagina = 15)
+    {
+        var filtro = new InventarioFiltroDto
+        {
+            Categoria = categoria,
+            Busqueda = busqueda,
+            EstadoStock = estadoStock,
+            OrdenarPor = ordenarPor,
+            Pagina = pagina,
+            TamanoPagina = tamanoPagina
+        };
+
+        var resultado = await _inventarioService.ObtenerInventarioPaginadoAsync(filtro);
         return Ok(resultado);
     }
 

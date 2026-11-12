@@ -529,4 +529,105 @@ public class InventarioServiceTests
         });
         await missingProdAct.Should().ThrowAsync<KeyNotFoundException>();
     }
+
+    [Fact]
+    public async Task ObtenerInventarioPaginado_PaginatesBy15ItemsPerPage_AndClampsPage()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        for (int i = 1; i <= 35; i++)
+        {
+            context.Productos.Add(new Producto
+            {
+                IdProducto = 100 + i,
+                CodigoBarras = $"7509{i:D3}",
+                Nombre = $"Producto Extra {i:D2}",
+                IdCategoria = 3, // Bebidas
+                PrecioVenta = 40m + i,
+                Costo = 15m,
+                StockActual = i % 5 == 0 ? 0 : 25,
+                StockMinimo = 10,
+                FactorEquivalencia = 1,
+                Activo = true
+            });
+        }
+        await context.SaveChangesAsync();
+
+        var service = new InventarioService(context);
+
+        // Act: 4 base insumos + 35 nuevos = 39 insumos -> 3 páginas de 15 (15, 15, 9)
+        var pag1 = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto { Pagina = 1, TamanoPagina = 15 });
+        var pag3 = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto { Pagina = 3, TamanoPagina = 15 });
+        var pagFueraRango = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto { Pagina = 99, TamanoPagina = 15 });
+
+        // Assert
+        pag1.TotalRegistros.Should().Be(39);
+        pag1.TotalPaginas.Should().Be(3);
+        pag1.PaginaActual.Should().Be(1);
+        pag1.Items.Should().HaveCount(15);
+        pag1.CategoriasDisponibles.Should().Contain(new[] { "Bebidas", "Comida", "Dulces", "Snacks" });
+
+        pag3.PaginaActual.Should().Be(3);
+        pag3.Items.Should().HaveCount(9);
+
+        pagFueraRango.PaginaActual.Should().Be(3);
+        pagFueraRango.Items.Should().HaveCount(9);
+    }
+
+    [Fact]
+    public async Task ObtenerInventarioPaginado_FiltersByStockStatus_SearchAccentInsensitive_AndSorts()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        context.Productos.Add(new Producto
+        {
+            IdProducto = 200,
+            CodigoBarras = "7508888",
+            Nombre = "Bebida Agotada Especial",
+            IdCategoria = 3,
+            PrecioVenta = 50m,
+            Costo = 20m,
+            StockActual = 0,
+            StockMinimo = 10,
+            Activo = true
+        });
+        await context.SaveChangesAsync();
+
+        var service = new InventarioService(context);
+
+        // Act & Assert: búsqueda insensible a acentos y multi-palabra
+        var busquedaAcento = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+        {
+            Busqueda = "palomitas clasicas"
+        });
+        busquedaAcento.TotalRegistros.Should().Be(1);
+        busquedaAcento.Items[0].Sku.Should().Be("7501001");
+
+        // Act & Assert: filtro de estado de stock "agotado"
+        var agotados = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+        {
+            EstadoStock = "agotado"
+        });
+        agotados.TotalRegistros.Should().Be(1);
+        agotados.Items[0].Sku.Should().Be("7508888");
+        agotados.TotalAgotados.Should().Be(1);
+
+        // Act & Assert: filtro "alerta" (Nachos 15<=15, M&M's 5<=10, Bebida 0<=10)
+        var alerta = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+        {
+            EstadoStock = "alerta",
+            OrdenarPor = "stock_asc"
+        });
+        alerta.TotalRegistros.Should().Be(3);
+        alerta.Items.Select(i => i.StockActual).Should().BeInAscendingOrder();
+
+        // Act & Assert: filtro "optimo" y ordenamiento por margen descendente
+        var optimo = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+        {
+            EstadoStock = "optimo",
+            OrdenarPor = "margen_desc"
+        });
+        optimo.TotalRegistros.Should().Be(2);
+        optimo.Items[0].MargenPorcentaje.Should().BeGreaterThanOrEqualTo(optimo.Items[1].MargenPorcentaje);
+    }
 }
