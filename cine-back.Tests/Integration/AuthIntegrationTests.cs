@@ -1,4 +1,4 @@
-using System.IdentityModel.Tokens.Jwt;
+﻿using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Net;
 using System.Net.Http.Headers;
@@ -45,7 +45,7 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
 
             builder.ConfigureServices(services =>
             {
-                // 1. Quitar la configuración principal que metió SQL Server
+                // 1. Quitar la configuraciÃ³n principal que metiÃ³ SQL Server
                 var descriptor = services.SingleOrDefault(d => d.ServiceType == typeof(DbContextOptions<CineDbContext>));
                 if (descriptor != null)
                 {
@@ -57,7 +57,7 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
                     .AddEntityFrameworkInMemoryDatabase()
                     .BuildServiceProvider();
 
-                // 3. Inyectar la DB en memoria forzándola a usar su propio contenedor
+                // 3. Inyectar la DB en memoria forzÃ¡ndola a usar su propio contenedor
                 services.AddDbContext<CineDbContext>(options =>
                 {
                     options.UseInMemoryDatabase("TestCineDb_Integration")
@@ -67,7 +67,7 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
         });
     }
 
-    private string GenerarJwtValido()
+    private string GenerarJwtValido(string rol = "Vendedor")
     {
         var config = _factory.Services.GetRequiredService<IConfiguration>();
         var key = config["Jwt:Key"] ?? RuntimeTestJwtKey;
@@ -81,7 +81,7 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
         {
             new Claim(ClaimTypes.NameIdentifier, "1"),
             new Claim(ClaimTypes.Name, "Raul"),
-            new Claim(ClaimTypes.Role, "Vendedor")
+            new Claim(ClaimTypes.Role, rol)
         };
 
         var token = new JwtSecurityToken(
@@ -103,11 +103,11 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
 
         response.StatusCode.Should().Match(status =>
             status == HttpStatusCode.OK || status == HttpStatusCode.Forbidden,
-            $"El endpoint devolvió {response.StatusCode}");
+            $"El endpoint devolviÃ³ {response.StatusCode}");
     }
 
     // =========================================================================
-    // PRUEBAS DE SEGURIDAD (HU-07): Bloqueo sin JWT y con JWT apócrifo
+    // PRUEBAS DE SEGURIDAD (HU-07): Bloqueo sin JWT y con JWT apÃ³crifo
     // =========================================================================
 
     [Theory]
@@ -151,8 +151,86 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     // =========================================================================
-    // PRUEBAS DE INTEGRACIÓN END-TO-END CON JWT VÁLIDO (HU-07)
+    // PRUEBAS DE INTEGRACIÃ“N END-TO-END CON JWT VÃLIDO (HU-07)
     // =========================================================================
+
+    // =========================================================================
+    // PRUEBAS DE INTEGRACIÃ“N HU-12: Seguridad IP, Fail-Safe y TemÃ¡ticas
+    // =========================================================================
+
+    [Fact]
+    public async Task ConfiguracionSeguridad_WithVendedorJwt_ReturnsForbidden()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", GenerarJwtValido("Vendedor"));
+
+        var response = await client.GetAsync("/api/configuracion/seguridad");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task FlujoIntegracionHu12_SeguridadIpYTematicas_CumpleEscenariosYFailSafe()
+    {
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CineDbContext>();
+            await DbSeeder.SeedSeguridadYTematicasAsync(db);
+        }
+
+        // 1. El sitio pÃºblico consulta la temÃ¡tica activa sin autenticaciÃ³n
+        var publicClient = _factory.CreateClient();
+        var activaResp = await publicClient.GetAsync("/api/tematicas/activa");
+        activaResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // 2. Administrador autenticado actualiza IP desde la misma subred (192.168.1.50 -> 192.168.1.200)
+        var adminClient = _factory.CreateClient();
+        adminClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", GenerarJwtValido("Administrador"));
+        adminClient.DefaultRequestHeaders.Add("X-Forwarded-For", "192.168.1.50");
+
+        var updateOkResp = await adminClient.PutAsJsonAsync("/api/configuracion/seguridad", new ActualizarConfiguracionSeguridadDto
+        {
+            IpAutorizada = "192.168.1.200",
+            HorarioInicioCajeros = "08:00:00",
+            HorarioFinCajeros = "23:00:00",
+            AutorizarExcepcionHorasExtras = true,
+            ConfirmarCambioRed = false
+        });
+        updateOkResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updatedConfig = await updateOkResp.Content.ReadFromJsonAsync<ConfiguracionSeguridadDto>();
+        updatedConfig!.IpAutorizada.Should().Be("192.168.1.200");
+
+        // 3. Fail-Safe: intento desde subred distinta sin confirmaciÃ³n explÃ­cita retorna 409 Conflict
+        var remoteAdminClient = _factory.CreateClient();
+        remoteAdminClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", GenerarJwtValido("Administrador"));
+        remoteAdminClient.DefaultRequestHeaders.Add("X-Forwarded-For", "10.10.0.5");
+
+        var failSafeResp = await remoteAdminClient.PutAsJsonAsync("/api/configuracion/seguridad", new ActualizarConfiguracionSeguridadDto
+        {
+            IpAutorizada = "192.168.1.200",
+            HorarioInicioCajeros = "08:00:00",
+            HorarioFinCajeros = "23:00:00",
+            AutorizarExcepcionHorasExtras = false,
+            ConfirmarCambioRed = false
+        });
+        failSafeResp.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        // 4. Administrador activa "Noche de Terror" y el endpoint pÃºblico refleja el cambio al instante
+        var listResp = await adminClient.GetAsync("/api/tematicas");
+        listResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var tematicas = await listResp.Content.ReadFromJsonAsync<List<TematicaSitioDto>>();
+        var halloween = tematicas!.First(t => t.ClaveIdentificadora == "theme-halloween");
+
+        var activarResp = await adminClient.PutAsync($"/api/tematicas/{halloween.Id}/activar", null);
+        activarResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var nuevaActiva = await publicClient.GetFromJsonAsync<TematicaSitioDto>("/api/tematicas/activa");
+        nuevaActiva!.RutaArchivoCss.Should().Be("/css/themes/halloween.min.css");
+        nuevaActiva.EsActiva.Should().BeTrue();
+    }
 
     [Fact]
     public async Task FlujoIntegracionDulceriaPos_ConJwtValido_RetornaCatalogoEscanerYCalculoDeOrden()
@@ -167,7 +245,7 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", GenerarJwtValido());
 
-        // 1. Consultar catálogo POS con monitor de pizzas (56 rebanadas / 7 pizzas)
+        // 1. Consultar catÃ¡logo POS con monitor de pizzas (56 rebanadas / 7 pizzas)
         var catalogoResp = await client.GetAsync("/api/taquilla/dulceria/catalogo-pos");
         catalogoResp.StatusCode.Should().Be(HttpStatusCode.OK);
         var catalogo = await catalogoResp.Content.ReadFromJsonAsync<CatalogoDulceriaPosDto>();

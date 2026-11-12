@@ -1,4 +1,5 @@
-﻿using Cine.Application.Dtos;
+using Cine.Application.Dtos;
+using Cine.Application.Helpers;
 using Cine.Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 
@@ -19,7 +20,9 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<NetworkCheckResponseDto>> CheckNetwork(
         [FromHeader(Name = "X-Forwarded-For")] string? forwardedFor = null)
     {
-        string clientIp = ExtractClientIp(forwardedFor);
+        string clientIp = IpAddressHelper.ExtractClientIp(
+            forwardedFor,
+            HttpContext.Connection.RemoteIpAddress);
 
         var result = await _authService.CheckNetworkAsync(clientIp);
 
@@ -36,12 +39,15 @@ public class AuthController : ControllerBase
         [FromBody] LoginRequestDto request,
         [FromHeader(Name = "X-Forwarded-For")] string? forwardedFor = null)
     {
-        string clientIp = ExtractClientIp(forwardedFor);
+        string clientIp = IpAddressHelper.ExtractClientIp(
+            forwardedFor,
+            HttpContext.Connection.RemoteIpAddress);
+
         var result = await _authService.LoginAsync(request, clientIp);
 
         if (!result.Success)
         {
-            if (result.Message.Contains("red local", StringComparison.OrdinalIgnoreCase))
+            if (EsBloqueoAcceso(result.Message))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, result);
             }
@@ -51,18 +57,15 @@ public class AuthController : ControllerBase
         return Ok(result);
     }
 
-    private string ExtractClientIp(string? forwardedFor)
+    private static bool EsBloqueoAcceso(string? message)
     {
-        if (!string.IsNullOrWhiteSpace(forwardedFor))
+        if (string.IsNullOrWhiteSpace(message))
         {
-            var ipList = forwardedFor.Split(',');
-            if (ipList.Length > 0 && !string.IsNullOrWhiteSpace(ipList[0]))
-            {
-                return ipList[0].Trim();
-            }
+            return false;
         }
 
-        return HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+        return message.Contains("red local", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("restricción de red", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("horario laboral", StringComparison.OrdinalIgnoreCase);
     }
-
 }

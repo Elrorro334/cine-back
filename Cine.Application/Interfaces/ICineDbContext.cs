@@ -25,5 +25,12 @@ public interface ICineDbContext
     DbSet<EntradaMercancium> EntradaMercancia { get; set; }
     DbSet<Proveedor> Proveedores { get; set; }
     DbSet<FacturaProveedor> FacturasProveedor { get; set; }
+    DbSet<CanjePreorden> CanjePreordens { get; set; }
+    DbSet<PagoVenta> PagoVentas { get; set; }
+    DbSet<Sucursal> Sucursales { get; set; }
+    DbSet<ConfiguracionSeguridad> ConfiguracionesSeguridad { get; set; }
+    DbSet<TurnoLaboral> TurnosLaborales { get; set; }
+    DbSet<TematicaSitio> TematicasSitio { get; set; }
+    DbSet<PlantillaCss> PlantillasCss { get; set; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

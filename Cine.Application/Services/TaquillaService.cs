@@ -21,6 +21,10 @@ public class TaquillaService : ITaquillaService
     public const int FactorRebanadasPorPizza = 8;
     private const string TipoDulceria = "dulceria";
     private const string TipoBoleto = "boleto";
+    private const string TipoVideoTrailer = "Trailer";
+    private const string PropiedadResults = "results";
+    private const string HorarioPorDefecto = "16:00";
+    private const string FormatoHoraMinuto = "HH:mm";
 
     private static readonly Dictionary<string, string> MapaCertificaciones = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -121,7 +125,7 @@ public class TaquillaService : ITaquillaService
             using var doc = JsonDocument.Parse(json);
 
             var resultados = new List<TmdbSearchResultDto>();
-            if (doc.RootElement.TryGetProperty("results", out var resultsElement) && resultsElement.ValueKind == JsonValueKind.Array)
+            if (doc.RootElement.TryGetProperty(PropiedadResults, out var resultsElement) && resultsElement.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in resultsElement.EnumerateArray())
                 {
@@ -268,13 +272,14 @@ public class TaquillaService : ITaquillaService
     {
         if (creditsProp.TryGetProperty("crew", out var crewProp) && crewProp.ValueKind == JsonValueKind.Array)
         {
-            foreach (var member in crewProp.EnumerateArray())
+            var director = crewProp.EnumerateArray()
+                .Where(member => GetJsonString(member, "job") == "Director")
+                .Select(member => GetJsonString(member, "name"))
+                .FirstOrDefault(name => !string.IsNullOrEmpty(name));
+
+            if (!string.IsNullOrEmpty(director))
             {
-                if (GetJsonString(member, "job") == "Director")
-                {
-                    var name = GetJsonString(member, "name");
-                    if (!string.IsNullOrEmpty(name)) return name;
-                }
+                return director;
             }
         }
         return "Director Cinematográfico";
@@ -301,7 +306,7 @@ public class TaquillaService : ITaquillaService
     private static string ExtraerClasificacion(JsonElement root)
     {
         if (!root.TryGetProperty("release_dates", out var rdProp) ||
-            !rdProp.TryGetProperty("results", out var rdResults) ||
+            !rdProp.TryGetProperty(PropiedadResults, out var rdResults) ||
             rdResults.ValueKind != JsonValueKind.Array)
         {
             return "B";
@@ -349,7 +354,7 @@ public class TaquillaService : ITaquillaService
     private static string? ExtraerTrailerKey(JsonElement root)
     {
         if (!root.TryGetProperty("videos", out var videosProp) ||
-            !videosProp.TryGetProperty("results", out var vidResults) ||
+            !videosProp.TryGetProperty(PropiedadResults, out var vidResults) ||
             vidResults.ValueKind != JsonValueKind.Array)
         {
             return null;
@@ -360,11 +365,11 @@ public class TaquillaService : ITaquillaService
         {
             var site = GetJsonString(v, "site");
             var type = GetJsonString(v, "type");
-            if (site == "YouTube" && (type == "Trailer" || trailerKey == null))
+            if (site == "YouTube" && (type == TipoVideoTrailer || trailerKey == null))
             {
                 var key = GetJsonString(v, "key");
                 trailerKey = !string.IsNullOrEmpty(key) ? key : null;
-                if (type == "Trailer") break;
+                if (type == TipoVideoTrailer) break;
             }
         }
 
@@ -514,7 +519,7 @@ public class TaquillaService : ITaquillaService
 
         if (listaHorarios.Count == 0)
         {
-            listaHorarios.Add("16:00");
+            listaHorarios.Add(HorarioPorDefecto);
         }
         return listaHorarios;
     }
@@ -750,7 +755,7 @@ public class TaquillaService : ITaquillaService
             IdSala = funcion.IdSala,
             NombreSala = funcion.IdSalaNavigation?.NombreSala ?? "Sala 1",
             PeliculaTitulo = pelicula?.Titulo ?? string.Empty,
-            Horario = funcion.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
+            Horario = funcion.HoraInicio.ToString(FormatoHoraMinuto, CultureInfo.InvariantCulture),
             Precio = funcion.Precio,
             Butacas = butacasDto
         };
@@ -961,7 +966,10 @@ public class TaquillaService : ITaquillaService
                 Tipo = string.IsNullOrWhiteSpace(i.Tipo) ? TipoDulceria : i.Tipo,
                 Cantidad = i.Cantidad,
                 Precio = i.Precio,
-                Asientos = i.Asientos != null ? new List<string>(i.Asientos) : null
+                Asientos = i.Asientos != null ? new List<string>(i.Asientos) : null,
+                NombreSala = i.NombreSala,
+                EsPreorden = i.EsPreorden,
+                CodigoPreorden = i.CodigoPreorden
             })
             .ToList();
     }
@@ -998,6 +1006,7 @@ public class TaquillaService : ITaquillaService
         }
 
         var existente = lineas.FirstOrDefault(l =>
+            !l.EsPreorden &&
             l.Tipo == TipoDulceria &&
             ((l.IdProducto.HasValue && l.IdProducto.Value == producto.IdProducto) ||
              (!string.IsNullOrWhiteSpace(l.Sku) && string.Equals(l.Sku, producto.Sku, StringComparison.OrdinalIgnoreCase))));
@@ -1171,7 +1180,10 @@ public class TaquillaService : ITaquillaService
                 Cantidad = linea.Cantidad,
                 PrecioUnitario = precioUnitario,
                 Subtotal = subtotalLinea,
-                Asientos = linea.Asientos
+                Asientos = linea.Asientos,
+                NombreSala = linea.NombreSala,
+                EsPreorden = linea.EsPreorden,
+                CodigoPreorden = linea.CodigoPreorden
             });
             idx++;
         }
@@ -1203,11 +1215,20 @@ public class TaquillaService : ITaquillaService
         await ValidarDisponibilidadDulceriaAsync(dto.Items);
 
         var totalCalculado = dto.Items.Sum(i => i.Precio * i.Cantidad);
-        var metodoNormalizado = string.IsNullOrWhiteSpace(dto.MetodoPago) ? "Efectivo" : dto.MetodoPago;
+        var metodoNormalizado = string.IsNullOrWhiteSpace(dto.MetodoPago) ? "Efectivo" : dto.MetodoPago.Trim();
+        var (montoRecibido, cambioCalculado) = ValidarYCalcularPago(dto, totalCalculado, metodoNormalizado);
+        var codigoPreorden = ExtraerCodigoPreorden(dto);
 
+        Preorden? preordenParaCanjear = null;
+        if (!string.IsNullOrWhiteSpace(codigoPreorden))
+        {
+            preordenParaCanjear = await ValidarPreordenParaVentaAsync(codigoPreorden);
+        }
+
+        var idVendedorFinal = dto.IdVendedor > 0 ? dto.IdVendedor : 1;
         var venta = new Ventum
         {
-            IdVendedor = dto.IdVendedor > 0 ? dto.IdVendedor : 1,
+            IdVendedor = idVendedorFinal,
             FechaVenta = DateTime.Now,
             Total = totalCalculado,
             MetodoPago = metodoNormalizado
@@ -1223,6 +1244,14 @@ public class TaquillaService : ITaquillaService
             await ProcesarItemVentaAsync(venta.IdVenta, item, productoBoleto);
         }
 
+        var codigoBarrasTicket = GenerarCodigoBarrasTicket(venta.IdVenta, venta.FechaVenta);
+        RegistrarPagoEnBd(venta, metodoNormalizado, montoRecibido, cambioCalculado, dto.FolioAutorizacion, codigoBarrasTicket);
+
+        if (preordenParaCanjear != null)
+        {
+            RegistrarCanjePreordenEnBd(preordenParaCanjear, venta.IdVenta, idVendedorFinal, totalCalculado);
+        }
+
         await _db.SaveChangesAsync();
 
         return new VentaConfirmadaDto
@@ -1231,9 +1260,115 @@ public class TaquillaService : ITaquillaService
             Folio = $"VT-{venta.IdVenta:D5}",
             Total = venta.Total,
             MetodoPago = metodoNormalizado,
+            MontoRecibido = montoRecibido,
+            Cambio = cambioCalculado,
+            FolioAutorizacion = dto.FolioAutorizacion,
+            RfcCine = "CTX-260414-9X0",
+            NombreCine = "CINE TEATRO XILOTZIN",
+            DireccionCine = "JILOTEPEC, ESTADO DE MÉXICO",
+            TelefonoCine = "(55) 1234 5678",
+            CodigoBarrasTicket = codigoBarrasTicket,
+            CodigoPreordenCanjeada = preordenParaCanjear?.CodigoQr ?? codigoPreorden,
             FechaVenta = venta.FechaVenta,
             Items = dto.Items
         };
+    }
+
+    private static (decimal MontoRecibido, decimal Cambio) ValidarYCalcularPago(
+        RegistrarVentaDto dto,
+        decimal totalCalculado,
+        string metodoNormalizado)
+    {
+        var esEfectivo = string.Equals(metodoNormalizado, "Efectivo", StringComparison.OrdinalIgnoreCase);
+
+        if (!esEfectivo && dto.FolioAutorizacion != null && string.IsNullOrWhiteSpace(dto.FolioAutorizacion))
+        {
+            throw new ArgumentException("El folio de autorización (voucher) de la terminal no puede estar vacío.");
+        }
+
+        var montoRecibido = dto.MontoRecibido ?? totalCalculado;
+
+        if (esEfectivo && dto.MontoRecibido.HasValue && dto.MontoRecibido.Value < totalCalculado)
+        {
+            throw new ArgumentException(
+                $"El efectivo recibido (${dto.MontoRecibido.Value:F2}) es menor al monto total a cobrar (${totalCalculado:F2}).");
+        }
+
+        var cambio = esEfectivo ? Math.Max(0m, montoRecibido - totalCalculado) : 0m;
+        return (montoRecibido, cambio);
+    }
+
+    private static string? ExtraerCodigoPreorden(RegistrarVentaDto dto)
+    {
+        if (!string.IsNullOrWhiteSpace(dto.CodigoPreorden))
+        {
+            return dto.CodigoPreorden.Trim().ToUpperInvariant();
+        }
+
+        var desdeItem = dto.Items.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.CodigoPreorden))?.CodigoPreorden;
+        return string.IsNullOrWhiteSpace(desdeItem) ? null : desdeItem.Trim().ToUpperInvariant();
+    }
+
+    private async Task<Preorden?> ValidarPreordenParaVentaAsync(string codigoPreorden)
+    {
+        var preorden = await _db.Preordens.FirstOrDefaultAsync(p => p.CodigoQr == codigoPreorden);
+        if (preorden == null) return null;
+
+        var yaCanjeada = !preorden.EstadoActivo ||
+                         await _db.CanjePreordens.AnyAsync(c => c.IdPreorden == preorden.IdPreorden);
+        if (yaCanjeada)
+        {
+            throw new InvalidOperationException($"El código QR '{codigoPreorden}' ya se encuentra marcado como Canjeado.");
+        }
+
+        var dias = Math.Max(0, (int)(DateTime.Today - preorden.FechaCreacion.Date).TotalDays);
+        if (dias > 12)
+        {
+            throw new InvalidOperationException($"El código QR '{codigoPreorden}' supera los 12 días de vigencia y ha expirado.");
+        }
+
+        return preorden;
+    }
+
+    private static string GenerarCodigoBarrasTicket(int idVenta, DateTime fechaVenta)
+    {
+        return $"75010{fechaVenta:MMdd}{idVenta:D4}";
+    }
+
+    private void RegistrarPagoEnBd(
+        Ventum venta,
+        string metodoNormalizado,
+        decimal montoRecibido,
+        decimal cambioCalculado,
+        string? folioAutorizacion,
+        string codigoBarrasTicket)
+    {
+        _db.PagoVentas.Add(new PagoVenta
+        {
+            IdVenta = venta.IdVenta,
+            MetodoPago = metodoNormalizado,
+            MontoTotal = venta.Total,
+            MontoRecibido = montoRecibido,
+            Cambio = cambioCalculado,
+            FolioAutorizacion = string.IsNullOrWhiteSpace(folioAutorizacion) ? null : folioAutorizacion.Trim(),
+            CodigoBarrasTicket = codigoBarrasTicket,
+            RfcEmisor = "CTX-260414-9X0",
+            FechaPago = venta.FechaVenta
+        });
+    }
+
+    private void RegistrarCanjePreordenEnBd(Preorden preorden, int idVenta, int idVendedor, decimal montoCanjeado)
+    {
+        preorden.EstadoActivo = false;
+        _db.CanjePreordens.Add(new CanjePreorden
+        {
+            IdPreorden = preorden.IdPreorden,
+            IdVenta = idVenta,
+            IdVendedor = idVendedor,
+            CodigoQr = preorden.CodigoQr ?? string.Empty,
+            FechaCanje = DateTime.Now,
+            MontoCanjeado = montoCanjeado
+        });
     }
 
     private async Task ValidarDisponibilidadDulceriaAsync(List<RegistrarVentaItemDto> items)
@@ -1340,54 +1475,54 @@ public class TaquillaService : ITaquillaService
     private async Task ValidarDisponibilidadAsientosAsync(List<RegistrarVentaItemDto> items)
     {
         var boletosConAsientos = items
-            .Where(i => i.Tipo == "boleto" && i.IdFuncion.HasValue && i.Asientos != null && i.Asientos.Count > 0)
+            .Where(i => i.Tipo == TipoBoleto && i.IdFuncion.HasValue && i.Asientos != null && i.Asientos.Count > 0)
             .ToList();
 
         if (boletosConAsientos.Count == 0) return;
 
-        var gruposPorFuncion = boletosConAsientos.GroupBy(i => i.IdFuncion!.Value);
-
-        foreach (var grupo in gruposPorFuncion)
+        foreach (var grupo in boletosConAsientos.GroupBy(i => i.IdFuncion!.Value))
         {
-            var funcionId = grupo.Key;
-            var todosLosAsientos = grupo.SelectMany(i => i.Asientos!).ToList();
+            await ValidarGrupoAsientosFuncionAsync(grupo.Key, grupo.SelectMany(i => i.Asientos!).ToList());
+        }
+    }
 
-            // 1. Validar asientos duplicados en la misma orden
-            if (todosLosAsientos.Distinct(StringComparer.OrdinalIgnoreCase).Count() != todosLosAsientos.Count)
-            {
-                throw new ArgumentException("No se pueden seleccionar asientos duplicados en la misma orden.");
-            }
+    private async Task ValidarGrupoAsientosFuncionAsync(int funcionId, List<string> todosLosAsientos)
+    {
+        if (todosLosAsientos.Distinct(StringComparer.OrdinalIgnoreCase).Count() != todosLosAsientos.Count)
+        {
+            throw new ArgumentException("No se pueden seleccionar asientos duplicados en la misma orden.");
+        }
 
-            var funcion = await _db.Funcions.FirstOrDefaultAsync(f => f.IdFuncion == funcionId);
-            if (funcion == null)
-            {
-                throw new ArgumentException($"No se encontró la función con ID {funcionId}.");
-            }
+        var funcion = await _db.Funcions.FirstOrDefaultAsync(f => f.IdFuncion == funcionId);
+        if (funcion == null)
+        {
+            throw new ArgumentException($"No se encontró la función con ID {funcionId}.");
+        }
 
-            var idSala = funcion.IdSala;
+        foreach (var asientoCodigo in todosLosAsientos)
+        {
+            await VerificarButacaOcupadaAsync(funcionId, funcion.IdSala, asientoCodigo);
+        }
+    }
 
-            // 2. Validar colisión contra asientos ya ocupados en la base de datos
-            foreach (var asientoCodigo in todosLosAsientos)
-            {
-                if (string.IsNullOrWhiteSpace(asientoCodigo) || asientoCodigo.Length < 2) continue;
+    private async Task VerificarButacaOcupadaAsync(int funcionId, int idSala, string asientoCodigo)
+    {
+        if (string.IsNullOrWhiteSpace(asientoCodigo) || asientoCodigo.Length < 2) return;
 
-                var fila = asientoCodigo.Substring(0, 1);
-                if (!int.TryParse(asientoCodigo.Substring(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out var numero)) continue;
+        var fila = asientoCodigo.Substring(0, 1);
+        if (!int.TryParse(asientoCodigo.Substring(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out var numero)) return;
 
-                var butaca = await _db.Butacas
-                    .FirstOrDefaultAsync(b => b.IdSala == idSala && b.Fila == fila && b.Numero == numero);
+        var butaca = await _db.Butacas
+            .FirstOrDefaultAsync(b => b.IdSala == idSala && b.Fila == fila && b.Numero == numero);
 
-                if (butaca != null)
-                {
-                    var estaOcupada = await _db.EstadoButacaFuncions
-                        .AnyAsync(e => e.IdFuncion == funcionId && e.IdButaca == butaca.IdButaca && e.Estato);
+        if (butaca == null) return;
 
-                    if (estaOcupada)
-                    {
-                        throw new InvalidOperationException($"La butaca {asientoCodigo} ya se encuentra ocupada para esta función.");
-                    }
-                }
-            }
+        var estaOcupada = await _db.EstadoButacaFuncions
+            .AnyAsync(e => e.IdFuncion == funcionId && e.IdButaca == butaca.IdButaca && e.Estato);
+
+        if (estaOcupada)
+        {
+            throw new InvalidOperationException($"La butaca {asientoCodigo} ya se encuentra ocupada para esta función.");
         }
     }
 
@@ -1541,13 +1676,75 @@ public class TaquillaService : ITaquillaService
     {
         if (string.IsNullOrWhiteSpace(codigoQr)) return null;
 
+        var codigoLimpio = codigoQr.Trim().ToUpperInvariant();
         var pre = await _db.Preordens
             .Include(p => p.IdClienteNavigation)
             .Include(p => p.IdFuncionNavigation.IdPeliculaNavigation)
-            .FirstOrDefaultAsync(p => p.CodigoQr == codigoQr);
+            .FirstOrDefaultAsync(p => p.CodigoQr != null && p.CodigoQr.ToUpper() == codigoLimpio);
 
         if (pre == null) return null;
 
+        return await ConstruirPreordenDtoAsync(pre, codigoLimpio);
+    }
+
+    public async Task<PreordenDto> ValidarPreordenQrAsync(string codigoQr)
+    {
+        if (string.IsNullOrWhiteSpace(codigoQr))
+        {
+            throw new ArgumentException("El código o folio QR es obligatorio.");
+        }
+
+        var preorden = await ObtenerPreordenAsync(codigoQr);
+        if (preorden == null)
+        {
+            throw new KeyNotFoundException($"No se encontró ninguna pre-orden con el folio '{codigoQr.Trim().ToUpperInvariant()}'.");
+        }
+
+        if (preorden.Canjeada)
+        {
+            throw new InvalidOperationException(
+                preorden.MotivoRechazo ?? "El código QR ya se encuentra marcado como Canjeado en la base de datos.");
+        }
+
+        if (preorden.Expirada)
+        {
+            throw new InvalidOperationException(
+                preorden.MotivoRechazo ?? "El código QR supera los 12 días de vigencia y ha expirado.");
+        }
+
+        if (preorden.BoletosGeneral <= 0)
+        {
+            throw new InvalidOperationException("La pre-orden no contiene boletos para canjear.");
+        }
+
+        return preorden;
+    }
+
+    public async Task<List<PreordenDto>> ObtenerPreordenesActivasAsync()
+    {
+        var preordenes = await _db.Preordens
+            .Include(p => p.IdClienteNavigation)
+            .Include(p => p.IdFuncionNavigation.IdPeliculaNavigation)
+            .Where(p => p.EstadoActivo)
+            .OrderByDescending(p => p.FechaCreacion)
+            .Take(20)
+            .ToListAsync();
+
+        var resultado = new List<PreordenDto>();
+        foreach (var pre in preordenes)
+        {
+            var dto = await ConstruirPreordenDtoAsync(pre, pre.CodigoQr ?? string.Empty);
+            if (dto.EstadoActivo && !dto.Canjeada && !dto.Expirada)
+            {
+                resultado.Add(dto);
+            }
+        }
+
+        return resultado;
+    }
+
+    private async Task<PreordenDto> ConstruirPreordenDtoAsync(Preorden pre, string codigoFallback)
+    {
         var boletos = await _db.DetallePreordenBoletos
             .Where(b => b.IdPreorden == pre.IdPreorden)
             .ToListAsync();
@@ -1557,10 +1754,125 @@ public class TaquillaService : ITaquillaService
             .Where(d => d.IdPreorden == pre.IdPreorden)
             .ToListAsync();
 
-        return MapPreordenToDto(pre, boletos, dulceria, codigoQr);
+        var boletosCantidad = boletos.Sum(b => b.Caantidad);
+        var precioBoleto = pre.IdFuncionNavigation?.Precio ?? 50m;
+        var subtotalBoletos = boletosCantidad * precioBoleto;
+
+        var combos = dulceria.Select(d => new PreordenComboDto
+        {
+            IdProducto = d.IdProducto,
+            Sku = d.IdProductoNavigation?.CodigoBarras ?? string.Empty,
+            Nombre = d.IdProductoNavigation?.Nombre ?? "Combo",
+            Cantidad = d.Cantidad,
+            Precio = d.IdProductoNavigation?.PrecioVenta ?? 0m
+        }).ToList();
+
+        var subtotalCombos = combos.Sum(c => c.Precio * c.Cantidad);
+        var diasTranscurridos = Math.Max(0, (int)(DateTime.Today - pre.FechaCreacion.Date).TotalDays);
+        var yaCanjeada = !pre.EstadoActivo ||
+                         await _db.CanjePreordens.AnyAsync(c => c.IdPreorden == pre.IdPreorden);
+        var expirada = diasTranscurridos > 12;
+
+        return new PreordenDto
+        {
+            IdPreorden = pre.IdPreorden,
+            Codigo = pre.CodigoQr ?? codigoFallback,
+            Cliente = pre.IdClienteNavigation?.Nombre ?? "Cliente Xilotzin",
+            Telefono = pre.IdClienteNavigation?.NumeroTelefono ?? "",
+            Pelicula = pre.IdFuncionNavigation?.IdPeliculaNavigation?.Titulo ?? "Película",
+            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString(FormatoHoraMinuto, CultureInfo.InvariantCulture) ?? HorarioPorDefecto,
+            NombreSala = pre.IdFuncionNavigation?.IdSalaNavigation?.NombreSala ?? "Sala 1",
+            IdFuncion = pre.IdFuncion,
+            BoletosGeneral = boletosCantidad,
+            PrecioBoleto = precioBoleto,
+            Asientos = new List<string>(),
+            Combos = combos,
+            Total = subtotalBoletos + subtotalCombos,
+            FechaCreacion = pre.FechaCreacion.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            VigenciaDias = pre.Vigencia,
+            DiasTranscurridos = diasTranscurridos,
+            Expirada = expirada,
+            Canjeada = yaCanjeada,
+            MotivoRechazo = ObtenerMotivoRechazoPreorden(yaCanjeada, expirada, diasTranscurridos),
+            EstadoActivo = pre.EstadoActivo && !yaCanjeada && !expirada
+        };
+    }
+
+    private static string? ObtenerMotivoRechazoPreorden(bool yaCanjeada, bool expirada, int diasTranscurridos)
+    {
+        if (yaCanjeada)
+        {
+            return "El código QR ya fue canjeado anteriormente o se encuentra inactivo.";
+        }
+        if (expirada)
+        {
+            return $"El código QR supera los 12 días de vigencia ({diasTranscurridos} días transcurridos).";
+        }
+        return null;
     }
 
     public async Task<PreordenDto> CrearPreordenAsync(CrearPreordenDto dto)
+    {
+        var (nombreLimpio, telefonoLimpio) = ValidarSolicitudCrearPreorden(dto);
+
+        var funcion = await _db.Funcions
+            .Include(f => f.IdPeliculaNavigation)
+            .Include(f => f.IdSalaNavigation)
+            .FirstOrDefaultAsync(f => f.IdFuncion == dto.IdFuncion);
+
+        if (funcion == null)
+        {
+            throw new ArgumentException($"No se encontró la función con ID {dto.IdFuncion}.");
+        }
+
+        var cliente = await ObtenerOActualizarClientePreordenAsync(nombreLimpio, telefonoLimpio);
+        var folio = await GenerarFolioPreordenUnicoAsync();
+
+        var preorden = new Preorden
+        {
+            CodigoQr = folio,
+            IdFuncion = funcion.IdFuncion,
+            IdCliente = cliente.IdCliente,
+            FechaCreacion = DateTime.Now,
+            Vigencia = 12,
+            EstadoActivo = true
+        };
+        _db.Preordens.Add(preorden);
+        await _db.SaveChangesAsync();
+
+        var precioBoleto = funcion.Precio > 0 ? funcion.Precio : 50m;
+        var subtotalBoletos = dto.Boletos * precioBoleto;
+        _db.DetallePreordenBoletos.Add(new DetallePreordenBoleto
+        {
+            IdPreorden = preorden.IdPreorden,
+            Caantidad = dto.Boletos,
+            Subtotal = subtotalBoletos
+        });
+
+        var (combosList, subtotalCombos) = await AgregarCombosPreordenAsync(preorden.IdPreorden, dto.Combos);
+        await _db.SaveChangesAsync();
+
+        return new PreordenDto
+        {
+            IdPreorden = preorden.IdPreorden,
+            Codigo = folio,
+            Cliente = cliente.Nombre,
+            Telefono = cliente.NumeroTelefono ?? telefonoLimpio,
+            Pelicula = funcion.IdPeliculaNavigation?.Titulo ?? "Película",
+            Horario = funcion.HoraInicio.ToString(FormatoHoraMinuto, CultureInfo.InvariantCulture),
+            IdFuncion = funcion.IdFuncion,
+            BoletosGeneral = dto.Boletos,
+            PrecioBoleto = precioBoleto,
+            Asientos = new List<string>(),
+            Combos = combosList,
+            Total = subtotalBoletos + subtotalCombos,
+            FechaCreacion = preorden.FechaCreacion.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            VigenciaDias = preorden.Vigencia,
+            EstadoActivo = preorden.EstadoActivo
+        };
+    }
+
+    private static (string NombreLimpio, string TelefonoLimpio) ValidarSolicitudCrearPreorden(CrearPreordenDto dto)
     {
         if (dto == null)
         {
@@ -1585,19 +1897,12 @@ public class TaquillaService : ITaquillaService
 
         var telefonoLimpio = NormalizarTelefonoMexicano(dto.TelefonoCliente);
 
-        var funcion = await _db.Funcions
-            .Include(f => f.IdPeliculaNavigation)
-            .Include(f => f.IdSalaNavigation)
-            .FirstOrDefaultAsync(f => f.IdFuncion == dto.IdFuncion);
+        return (nombreLimpio, telefonoLimpio);
+    }
 
-        if (funcion == null)
-        {
-            throw new ArgumentException($"No se encontró la función con ID {dto.IdFuncion}.");
-        }
-
-        var cliente = await _db.Clientes
-            .FirstOrDefaultAsync(c => c.NumeroTelefono == telefonoLimpio);
-
+    private async Task<Cliente> ObtenerOActualizarClientePreordenAsync(string nombreLimpio, string telefonoLimpio)
+    {
+        var cliente = await _db.Clientes.FirstOrDefaultAsync(c => c.NumeroTelefono == telefonoLimpio);
         if (cliente == null)
         {
             cliente = new Cliente
@@ -1615,6 +1920,11 @@ public class TaquillaService : ITaquillaService
             await _db.SaveChangesAsync();
         }
 
+        return cliente;
+    }
+
+    private async Task<string> GenerarFolioPreordenUnicoAsync()
+    {
         string folio;
         do
         {
@@ -1622,76 +1932,42 @@ public class TaquillaService : ITaquillaService
             folio = $"PRE-XIL-{randomSuffix}";
         } while (await _db.Preordens.AnyAsync(p => p.CodigoQr == folio));
 
-        var preorden = new Preorden
-        {
-            CodigoQr = folio,
-            IdFuncion = funcion.IdFuncion,
-            IdCliente = cliente.IdCliente,
-            FechaCreacion = DateTime.Now,
-            Vigencia = 12,
-            EstadoActivo = true
-        };
-        _db.Preordens.Add(preorden);
-        await _db.SaveChangesAsync();
+        return folio;
+    }
 
-        var precioBoleto = funcion.Precio > 0 ? funcion.Precio : 50m;
-        var subtotalBoletos = dto.Boletos * precioBoleto;
-        var detalleBoleto = new DetallePreordenBoleto
-        {
-            IdPreorden = preorden.IdPreorden,
-            Caantidad = dto.Boletos,
-            Subtotal = subtotalBoletos
-        };
-        _db.DetallePreordenBoletos.Add(detalleBoleto);
-
+    private async Task<(List<PreordenComboDto> Combos, decimal Subtotal)> AgregarCombosPreordenAsync(
+        int idPreorden,
+        List<CrearPreordenItemDulceriaDto>? combosDto)
+    {
         var combosList = new List<PreordenComboDto>();
         decimal subtotalCombos = 0m;
 
-        if (dto.Combos != null && dto.Combos.Count > 0)
+        if (combosDto == null || combosDto.Count == 0)
         {
-            foreach (var comboDto in dto.Combos.Where(c => c.IdProducto > 0 && c.Cantidad > 0))
-            {
-                var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == comboDto.IdProducto);
-                if (producto != null)
-                {
-                    var detalleDulce = new DetallePreordenDulcerium
-                    {
-                        IdPreorden = preorden.IdPreorden,
-                        IdProducto = producto.IdProducto,
-                        Cantidad = comboDto.Cantidad
-                    };
-                    _db.DetallePreordenDulceria.Add(detalleDulce);
-                    subtotalCombos += producto.PrecioVenta * comboDto.Cantidad;
-                    combosList.Add(new PreordenComboDto
-                    {
-                        Nombre = producto.Nombre,
-                        Cantidad = comboDto.Cantidad,
-                        Precio = producto.PrecioVenta
-                    });
-                }
-            }
+            return (combosList, subtotalCombos);
         }
 
-        await _db.SaveChangesAsync();
-
-        return new PreordenDto
+        foreach (var comboDto in combosDto.Where(c => c.IdProducto > 0 && c.Cantidad > 0))
         {
-            IdPreorden = preorden.IdPreorden,
-            Codigo = folio,
-            Cliente = cliente.Nombre,
-            Telefono = cliente.NumeroTelefono ?? telefonoLimpio,
-            Pelicula = funcion.IdPeliculaNavigation?.Titulo ?? "Película",
-            Horario = funcion.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture),
-            IdFuncion = funcion.IdFuncion,
-            BoletosGeneral = dto.Boletos,
-            PrecioBoleto = precioBoleto,
-            Asientos = new List<string>(),
-            Combos = combosList,
-            Total = subtotalBoletos + subtotalCombos,
-            FechaCreacion = preorden.FechaCreacion.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            VigenciaDias = preorden.Vigencia,
-            EstadoActivo = preorden.EstadoActivo
-        };
+            var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == comboDto.IdProducto);
+            if (producto == null) continue;
+
+            _db.DetallePreordenDulceria.Add(new DetallePreordenDulcerium
+            {
+                IdPreorden = idPreorden,
+                IdProducto = producto.IdProducto,
+                Cantidad = comboDto.Cantidad
+            });
+            subtotalCombos += producto.PrecioVenta * comboDto.Cantidad;
+            combosList.Add(new PreordenComboDto
+            {
+                Nombre = producto.Nombre,
+                Cantidad = comboDto.Cantidad,
+                Precio = producto.PrecioVenta
+            });
+        }
+
+        return (combosList, subtotalCombos);
     }
 
     public async Task<SolicitarCodigoPreordenResponseDto> SolicitarCodigoRecuperacionAsync(SolicitarCodigoPreordenDto dto)
@@ -1986,7 +2262,7 @@ public class TaquillaService : ITaquillaService
             Cliente = pre.IdClienteNavigation?.Nombre ?? "Cliente Xilotzin",
             Telefono = pre.IdClienteNavigation?.NumeroTelefono ?? "",
             Pelicula = pre.IdFuncionNavigation?.IdPeliculaNavigation?.Titulo ?? "Película",
-            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "16:00",
+            Horario = pre.IdFuncionNavigation?.HoraInicio.ToString(FormatoHoraMinuto, CultureInfo.InvariantCulture) ?? HorarioPorDefecto,
             IdFuncion = pre.IdFuncion,
             BoletosGeneral = boletosCantidad,
             PrecioBoleto = precioBoleto,
@@ -2048,118 +2324,8 @@ public class TaquillaService : ITaquillaService
             Titulo = pelicula.Titulo
         };
 
-        try
-        {
-            int? tmdbId = null;
-
-            // 1. Buscar en TMDB con el título completo
-            var searchUrl = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&query={Uri.EscapeDataString(pelicula.Titulo.Trim())}&language=es-MX";
-            var searchResponse = await _httpClient.GetAsync(searchUrl);
-
-            if (searchResponse.IsSuccessStatusCode)
-            {
-                var searchJson = await searchResponse.Content.ReadAsStringAsync();
-                using var searchDoc = JsonDocument.Parse(searchJson);
-                if (searchDoc.RootElement.TryGetProperty("results", out var results) && results.GetArrayLength() > 0)
-                {
-                    tmdbId = results[0].GetProperty("id").GetInt32();
-                }
-            }
-
-            // 2. Si no se encontró y tiene subtítulo (ej: Spider-Man: Un nuevo día), buscar por título base
-            if (!tmdbId.HasValue && pelicula.Titulo.Contains(':'))
-            {
-                var cleanTitle = pelicula.Titulo.Split(':')[0].Trim();
-                var fallbackSearchUrl = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&query={Uri.EscapeDataString(cleanTitle)}&language=es-MX";
-                var fbResponse = await _httpClient.GetAsync(fallbackSearchUrl);
-                if (fbResponse.IsSuccessStatusCode)
-                {
-                    var fbJson = await fbResponse.Content.ReadAsStringAsync();
-                    using var fbDoc = JsonDocument.Parse(fbJson);
-                    if (fbDoc.RootElement.TryGetProperty("results", out var fbResults) && fbResults.GetArrayLength() > 0)
-                    {
-                        tmdbId = fbResults[0].GetProperty("id").GetInt32();
-                    }
-                }
-            }
-
-            // 3. Obtener videos oficiales de TMDB incluyendo español e inglés
-            if (tmdbId.HasValue)
-            {
-                var videosUrl = $"https://api.themoviedb.org/3/movie/{tmdbId.Value}/videos?api_key={_tmdbApiKey}&include_video_language=es,es-MX,es-ES,en,null";
-                var videosResponse = await _httpClient.GetAsync(videosUrl);
-                var videosJson = videosResponse.IsSuccessStatusCode ? await videosResponse.Content.ReadAsStringAsync() : "{}";
-                using var videosDoc = JsonDocument.Parse(videosJson);
-
-                var items = new List<TrailerItemDto>();
-                if (videosDoc.RootElement.TryGetProperty("results", out var vidArray) && vidArray.GetArrayLength() > 0)
-                {
-                    foreach (var v in vidArray.EnumerateArray())
-                    {
-                        var site = GetJsonString(v, "site");
-                        var key = GetJsonString(v, "key");
-                        var name = GetJsonString(v, "name");
-                        var type = GetJsonString(v, "type");
-                        if (site == "YouTube" && !string.IsNullOrWhiteSpace(key))
-                        {
-                            items.Add(new TrailerItemDto { Key = key, Nombre = name, Tipo = type });
-                        }
-                    }
-                }
-
-                dto.Trailers = items;
-
-                // Priorizar tráilers: primero Trailers con nombre en español o doblado, luego cualquier Trailer, luego Teaser
-                var candidateTrailers = items
-                    .OrderBy(i => i.Tipo == "Trailer" ? 0 : (i.Tipo == "Teaser" ? 1 : 2))
-                    .ThenBy(i => i.Nombre.Contains("Español", StringComparison.OrdinalIgnoreCase) ||
-                                 i.Nombre.Contains("Doblado", StringComparison.OrdinalIgnoreCase) ||
-                                 i.Nombre.Contains("Tráiler", StringComparison.OrdinalIgnoreCase) ||
-                                 i.Nombre.Contains("Trailer", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                    .ToList();
-
-                // Validar contra YouTube para garantizar que el video no haya sido borrado ni esté privado
-                foreach (var candidate in candidateTrailers)
-                {
-                    if (await EsVideoValidoEnYouTubeAsync(candidate.Key))
-                    {
-                        dto.TrailerKey = candidate.Key;
-                        break;
-                    }
-                }
-
-                // Si ninguno de los tráilers pasó la verificación, probar los demás videos
-                if (string.IsNullOrEmpty(dto.TrailerKey))
-                {
-                    foreach (var candidate in items)
-                    {
-                        if (await EsVideoValidoEnYouTubeAsync(candidate.Key))
-                        {
-                            dto.TrailerKey = candidate.Key;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        catch
-        {
-            // Silencioso ante fallos de red hacia TMDB
-        }
-
-        if (string.IsNullOrEmpty(dto.TrailerKey) && FallbackTrailers.TryGetValue(idPelicula, out var fb))
-        {
-            dto.TrailerKey = fb.Key;
-            if (dto.Trailers.Count == 0)
-            {
-                dto.Trailers.Add(new TrailerItemDto
-                {
-                    Key = fb.Key,
-                    Nombre = fb.Nombre,
-                    Tipo = "Trailer"
-                });
-            }
-        }
+        await PoblarVideosDesdeTmdbAsync(pelicula.Titulo, dto);
+        AplicarFallbackTrailerSiNecesario(idPelicula, dto);
 
         if (!string.IsNullOrEmpty(dto.TrailerKey))
         {
@@ -2167,5 +2333,122 @@ public class TaquillaService : ITaquillaService
         }
 
         return dto;
+    }
+
+    private async Task PoblarVideosDesdeTmdbAsync(string tituloPelicula, PeliculaTrailerDto dto)
+    {
+        try
+        {
+            var tmdbId = await BuscarTmdbIdPorTituloConFallbackAsync(tituloPelicula);
+            if (!tmdbId.HasValue) return;
+
+            var items = await ObtenerVideosYoutubeDePeliculaTmdbAsync(tmdbId.Value);
+            dto.Trailers = items;
+
+            var ordenados = items
+                .OrderBy(i => ObtenerPrioridadTipoVideo(i.Tipo))
+                .ThenBy(i => ContieneNombreTrailerPrioritario(i.Nombre) ? 0 : 1)
+                .ToList();
+
+            dto.TrailerKey = await SeleccionarPrimerVideoValidoAsync(ordenados.Select(c => c.Key))
+                             ?? await SeleccionarPrimerVideoValidoAsync(items.Select(c => c.Key));
+        }
+        catch
+        {
+            // Silencioso ante fallos de red hacia TMDB
+        }
+    }
+
+    private async Task<int?> BuscarTmdbIdPorTituloConFallbackAsync(string titulo)
+    {
+        var tmdbId = await BuscarPrimerTmdbIdAsync(titulo.Trim());
+        if (!tmdbId.HasValue && titulo.Contains(':'))
+        {
+            var cleanTitle = titulo.Split(':')[0].Trim();
+            tmdbId = await BuscarPrimerTmdbIdAsync(cleanTitle);
+        }
+        return tmdbId;
+    }
+
+    private async Task<int?> BuscarPrimerTmdbIdAsync(string query)
+    {
+        var searchUrl = $"https://api.themoviedb.org/3/search/movie?api_key={_tmdbApiKey}&query={Uri.EscapeDataString(query)}&language=es-MX";
+        var searchResponse = await _httpClient.GetAsync(searchUrl);
+        if (!searchResponse.IsSuccessStatusCode) return null;
+
+        var searchJson = await searchResponse.Content.ReadAsStringAsync();
+        using var searchDoc = JsonDocument.Parse(searchJson);
+        if (searchDoc.RootElement.TryGetProperty(PropiedadResults, out var results) && results.GetArrayLength() > 0)
+        {
+            return results[0].GetProperty("id").GetInt32();
+        }
+        return null;
+    }
+
+    private async Task<List<TrailerItemDto>> ObtenerVideosYoutubeDePeliculaTmdbAsync(int tmdbId)
+    {
+        var videosUrl = $"https://api.themoviedb.org/3/movie/{tmdbId}/videos?api_key={_tmdbApiKey}&include_video_language=es,es-MX,es-ES,en,null";
+        var videosResponse = await _httpClient.GetAsync(videosUrl);
+        var videosJson = videosResponse.IsSuccessStatusCode ? await videosResponse.Content.ReadAsStringAsync() : "{}";
+        using var videosDoc = JsonDocument.Parse(videosJson);
+
+        if (!videosDoc.RootElement.TryGetProperty(PropiedadResults, out var vidArray) || vidArray.GetArrayLength() == 0)
+        {
+            return new List<TrailerItemDto>();
+        }
+
+        return vidArray.EnumerateArray()
+            .Where(v => GetJsonString(v, "site") == "YouTube" && !string.IsNullOrWhiteSpace(GetJsonString(v, "key")))
+            .Select(v => new TrailerItemDto
+            {
+                Key = GetJsonString(v, "key"),
+                Nombre = GetJsonString(v, "name"),
+                Tipo = GetJsonString(v, "type")
+            })
+            .ToList();
+    }
+
+    private static int ObtenerPrioridadTipoVideo(string tipo)
+    {
+        if (tipo == TipoVideoTrailer) return 0;
+        if (tipo == "Teaser") return 1;
+        return 2;
+    }
+
+    private static bool ContieneNombreTrailerPrioritario(string nombre) =>
+        nombre.Contains("Español", StringComparison.OrdinalIgnoreCase) ||
+        nombre.Contains("Doblado", StringComparison.OrdinalIgnoreCase) ||
+        nombre.Contains("Tráiler", StringComparison.OrdinalIgnoreCase) ||
+        nombre.Contains(TipoVideoTrailer, StringComparison.OrdinalIgnoreCase);
+
+    private async Task<string?> SeleccionarPrimerVideoValidoAsync(IEnumerable<string> keys)
+    {
+        foreach (var key in keys)
+        {
+            if (await EsVideoValidoEnYouTubeAsync(key))
+            {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    private static void AplicarFallbackTrailerSiNecesario(int idPelicula, PeliculaTrailerDto dto)
+    {
+        if (!string.IsNullOrEmpty(dto.TrailerKey) || !FallbackTrailers.TryGetValue(idPelicula, out var fb))
+        {
+            return;
+        }
+
+        dto.TrailerKey = fb.Key;
+        if (dto.Trailers.Count == 0)
+        {
+            dto.Trailers.Add(new TrailerItemDto
+            {
+                Key = fb.Key,
+                Nombre = fb.Nombre,
+                Tipo = TipoVideoTrailer
+            });
+        }
     }
 }

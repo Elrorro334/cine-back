@@ -1,9 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace Cine.Domain.Entities
 {
-
     public partial class Ventum
     {
         public int IdVenta { get; set; }
@@ -17,6 +16,10 @@ namespace Cine.Domain.Entities
         public string? MetodoPago { get; set; }
 
         public virtual ICollection<DetalleVentum> DetalleVenta { get; set; } = new List<DetalleVentum>();
+
+        public virtual ICollection<PagoVenta> PagoVentas { get; set; } = new List<PagoVenta>();
+
+        public virtual ICollection<CanjePreorden> CanjePreordens { get; set; } = new List<CanjePreorden>();
 
         public virtual Vendedor IdVendedorNavigation { get; set; } = null!;
     }

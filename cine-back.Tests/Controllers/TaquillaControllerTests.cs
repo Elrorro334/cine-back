@@ -343,4 +343,72 @@ public class TaquillaControllerTests
         notFound.Should().NotBeNull();
         notFound!.StatusCode.Should().Be(404);
     }
+
+    [Fact]
+    public async Task GetPreorden_WhenExpiredOrRedeemed_ReturnsConflict()
+    {
+        _taquillaServiceMock.Setup(s => s.ObtenerPreordenAsync("PRE-EXP"))
+            .ThrowsAsync(new InvalidOperationException("La pre-orden 'PRE-EXP' ha expirado (15 días; vigencia máxima: 12 días)."));
+
+        var result = await _controller.GetPreorden("PRE-EXP");
+
+        var conflict = result as ConflictObjectResult;
+        conflict.Should().NotBeNull();
+        conflict!.StatusCode.Should().Be(409);
+    }
+
+    [Fact]
+    public async Task GetPreorden_WhenArgumentException_ReturnsBadRequest()
+    {
+        _taquillaServiceMock.Setup(s => s.ObtenerPreordenAsync(""))
+            .ThrowsAsync(new ArgumentException("Código obligatorio"));
+
+        var result = await _controller.GetPreorden("");
+
+        var bad = result as BadRequestObjectResult;
+        bad.Should().NotBeNull();
+        bad!.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task GetPreordenesActivas_ReturnsOkWithList()
+    {
+        var list = new List<PreordenDto>
+        {
+            new PreordenDto { IdPreorden = 1, Codigo = "PRE-XIL-001", Cliente = "Carlos", Total = 150m, VigenciaDias = 12, EstadoActivo = true }
+        };
+        _taquillaServiceMock.Setup(s => s.ObtenerPreordenesActivasAsync()).ReturnsAsync(list);
+
+        var result = await _controller.GetPreordenesActivas();
+
+        var ok = result as OkObjectResult;
+        ok.Should().NotBeNull();
+        ok!.StatusCode.Should().Be(200);
+        ok.Value.Should().BeEquivalentTo(list);
+    }
+
+    [Fact]
+    public async Task ValidarPreordenQr_MapsResponsesAndExceptionsCorrectly()
+    {
+        var dto = new PreordenDto { IdPreorden = 1, Codigo = "PRE-XIL-100", Total = 100m, VigenciaDias = 12, EstadoActivo = true };
+        _taquillaServiceMock.Setup(s => s.ValidarPreordenQrAsync("PRE-XIL-100")).ReturnsAsync(dto);
+
+        var okRes = await _controller.ValidarPreordenQr("PRE-XIL-100");
+        (okRes as OkObjectResult)!.StatusCode.Should().Be(200);
+
+        _taquillaServiceMock.Setup(s => s.ValidarPreordenQrAsync(""))
+            .ThrowsAsync(new ArgumentException("Folio vacío"));
+        var badRes = await _controller.ValidarPreordenQr("");
+        (badRes as BadRequestObjectResult)!.StatusCode.Should().Be(400);
+
+        _taquillaServiceMock.Setup(s => s.ValidarPreordenQrAsync("NO-EXISTE"))
+            .ThrowsAsync(new KeyNotFoundException("No existe"));
+        var nfRes = await _controller.ValidarPreordenQr("NO-EXISTE");
+        (nfRes as NotFoundObjectResult)!.StatusCode.Should().Be(404);
+
+        _taquillaServiceMock.Setup(s => s.ValidarPreordenQrAsync("PRE-CANJEADA"))
+            .ThrowsAsync(new InvalidOperationException("Ya fue canjeada"));
+        var confRes = await _controller.ValidarPreordenQr("PRE-CANJEADA");
+        (confRes as ConflictObjectResult)!.StatusCode.Should().Be(409);
+    }
 }
