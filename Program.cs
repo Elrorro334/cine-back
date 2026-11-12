@@ -1,4 +1,5 @@
 using Cine.Application;
+using Cine.Domain.Entities;
 using Cine.Infrastructure;
 using Cine.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -6,6 +7,8 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 
@@ -19,9 +22,18 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowPWA", policy =>
     {
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyMethod()
-              .AllowAnyHeader();
+        if (builder.Environment.IsDevelopment())
+        {
+            policy.SetIsOriginAllowed(_ => true)
+                  .AllowAnyMethod()
+                  .AllowAnyHeader();
+        }
+        else
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyMethod()
+                  .AllowAnyHeader();
+        }
     });
 });
 
@@ -92,13 +104,37 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 var app = builder.Build();
 
-// Siembra idempotente de butacas (HU-06) y catálogo de dulcería/stock fraccionado (HU-07).
+// Siembra idempotente de butacas (HU-06), catálogo de dulcería (HU-07) y seguridad/temáticas (HU-12).
 try
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<CineDbContext>();
+    await DbSeeder.EnsureSprint3TablesAsync(db);
+    await DbSeeder.EnsureHu12TablesAsync(db);
     await DbSeeder.SeedButacasAsync(db);
     await DbSeeder.SeedDulceriaAsync(db);
+
+    if (app.Environment.IsDevelopment())
+    {
+        var ipsLocales = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "127.0.0.1", "::1" };
+        foreach (var ip in Dns.GetHostEntry(Dns.GetHostName()).AddressList)
+        {
+            if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
+            {
+                ipsLocales.Add(ip.ToString());
+            }
+        }
+
+        var redesExistentes = await db.RedesAutorizadas.Select(r => r.DireccionIp).ToListAsync();
+        foreach (var ip in ipsLocales.Where(ip => !redesExistentes.Contains(ip, StringComparer.OrdinalIgnoreCase)))
+        {
+            db.RedesAutorizadas.Add(new RedesAutorizada { DireccionIp = ip });
+        }
+        await db.SaveChangesAsync();
+        await DbSeeder.SeedPreordenesDemoAsync(db);
+    }
+
+    await DbSeeder.SeedSeguridadYTematicasAsync(db);
 }
 catch (Exception ex)
 {

@@ -149,6 +149,7 @@ public class TaquillaController : ControllerBase
     /// {
     ///   "idVendedor": 1,
     ///   "metodoPago": "Efectivo",
+    ///   "montoRecibido": 200,
     ///   "items": [
     ///     {
     ///       "sku": "7501001",
@@ -195,11 +196,57 @@ public class TaquillaController : ControllerBase
     [HttpGet("preorden/{codigoQr}")]
     public async Task<IActionResult> GetPreorden(string codigoQr)
     {
-        var preorden = await _taquillaService.ObtenerPreordenAsync(codigoQr);
-        if (preorden == null)
+        try
         {
-            return NotFound(new { error = "Pre-orden no encontrada o código QR inválido." });
+            var preorden = await _taquillaService.ObtenerPreordenAsync(codigoQr);
+            if (preorden == null)
+            {
+                return NotFound(new { error = "Pre-orden no encontrada o código QR inválido." });
+            }
+            return Ok(preorden);
         }
-        return Ok(preorden);
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+    }
+
+    /// <remarks>
+    /// **HU-08: Obtener listado de pre-órdenes activas y vigentes (&lt;= 12 días) para selector rápido en caja.**
+    /// </remarks>
+    [HttpGet("preordenes-activas")]
+    public async Task<IActionResult> GetPreordenesActivas()
+    {
+        var activas = await _taquillaService.ObtenerPreordenesActivasAsync();
+        return Ok(activas);
+    }
+
+    /// <remarks>
+    /// **HU-08: Validar código QR de pre-orden en caja (verifica vigencia de 12 días y que no esté canjeada).**
+    /// </remarks>
+    [HttpPost("preorden/validar/{codigoQr}")]
+    public async Task<IActionResult> ValidarPreordenQr(string codigoQr)
+    {
+        try
+        {
+            var preorden = await _taquillaService.ValidarPreordenQrAsync(codigoQr);
+            return Ok(preorden);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
     }
 }
