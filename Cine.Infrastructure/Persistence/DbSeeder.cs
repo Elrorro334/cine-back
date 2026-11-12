@@ -245,6 +245,217 @@ BEGIN
 END;");
     }
 
+    public static async Task EnsureHu12TablesAsync(CineDbContext db)
+    {
+        if (!db.Database.IsRelational()) return;
+
+        await db.Database.ExecuteSqlRawAsync(@"
+IF OBJECT_ID('dbo.Sucursales', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Sucursales (
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Sucursales PRIMARY KEY,
+        Nombre VARCHAR(100) NOT NULL,
+        IpDefecto VARCHAR(45) NOT NULL
+    );
+END;
+
+IF OBJECT_ID('dbo.Configuracion_Seguridad', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Configuracion_Seguridad (
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Configuracion_Seguridad PRIMARY KEY,
+        SucursalId INT NOT NULL,
+        IpAutorizada VARCHAR(45) NOT NULL,
+        HorarioInicioCajeros TIME NOT NULL,
+        HorarioFinCajeros TIME NOT NULL,
+        AutorizarExcepcionHorasExtras BIT NOT NULL CONSTRAINT DF_ConfigSeguridad_HorasExtras DEFAULT(0),
+        FechaUltimaModificacion DATETIME NOT NULL,
+        UsuarioModificoId INT NOT NULL,
+        CONSTRAINT FK_ConfiguracionSeguridad_Sucursal FOREIGN KEY (SucursalId) REFERENCES dbo.Sucursales(Id)
+    );
+    CREATE INDEX IX_Configuracion_Seguridad_SucursalId ON dbo.Configuracion_Seguridad(SucursalId);
+END;
+
+IF OBJECT_ID('dbo.Turnos_Laborales', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Turnos_Laborales (
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Turnos_Laborales PRIMARY KEY,
+        NombreTurno VARCHAR(50) NOT NULL,
+        HoraInicio TIME NOT NULL,
+        HoraFin TIME NOT NULL
+    );
+END;
+
+IF OBJECT_ID('dbo.Tematicas_Sitio', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Tematicas_Sitio (
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Tematicas_Sitio PRIMARY KEY,
+        NombreTematica VARCHAR(50) NOT NULL,
+        ClaveIdentificadora VARCHAR(50) NOT NULL,
+        EsActiva BIT NOT NULL CONSTRAINT DF_TematicasSitio_EsActiva DEFAULT(0),
+        FechaActivacion DATETIME NULL,
+        CONSTRAINT UQ_Tematicas_Sitio_NombreTematica UNIQUE (NombreTematica)
+    );
+END;
+
+IF OBJECT_ID('dbo.Plantillas_CSS', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Plantillas_CSS (
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Plantillas_CSS PRIMARY KEY,
+        TematicaId INT NOT NULL,
+        RutaArchivoCss VARCHAR(255) NOT NULL,
+        PaletaColoresJson NVARCHAR(MAX) NOT NULL,
+        Tipografia VARCHAR(100) NOT NULL,
+        CONSTRAINT FK_PlantillasCss_Tematica FOREIGN KEY (TematicaId) REFERENCES dbo.Tematicas_Sitio(Id)
+    );
+    CREATE INDEX IX_Plantillas_CSS_TematicaId ON dbo.Plantillas_CSS(TematicaId);
+END;
+
+IF OBJECT_ID('dbo.__EFMigrationsHistory', 'U') IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.__EFMigrationsHistory WHERE MigrationId = '20261111195507_M6_HU12_SeguridadYTematicas')
+    BEGIN
+        INSERT INTO dbo.__EFMigrationsHistory (MigrationId, ProductVersion)
+        VALUES ('20261111195507_M6_HU12_SeguridadYTematicas', '10.0.13');
+    END
+END;");
+    }
+
+    public static async Task SeedSeguridadYTematicasAsync(CineDbContext db)
+    {
+        var ipInicial = await db.RedesAutorizadas
+            .Where(r => r.DireccionIp != "127.0.0.1" && r.DireccionIp != "::1")
+            .Select(r => r.DireccionIp)
+            .FirstOrDefaultAsync() ?? "192.168.1.100";
+
+        var sucursal = await db.Sucursales.FirstOrDefaultAsync();
+        if (sucursal == null)
+        {
+            sucursal = new Sucursal
+            {
+                Nombre = "Cine Teatro Xilotzin - Matriz Jilotepec",
+                IpDefecto = ipInicial
+            };
+            db.Sucursales.Add(sucursal);
+            await db.SaveChangesAsync();
+        }
+
+        if (!await db.TurnosLaborales.AnyAsync())
+        {
+            db.TurnosLaborales.AddRange(
+                new TurnoLaboral
+                {
+                    NombreTurno = "Matutino",
+                    HoraInicio = new TimeSpan(8, 0, 0),
+                    HoraFin = new TimeSpan(15, 30, 0)
+                },
+                new TurnoLaboral
+                {
+                    NombreTurno = "Vespertino",
+                    HoraInicio = new TimeSpan(15, 30, 0),
+                    HoraFin = new TimeSpan(23, 0, 0)
+                }
+            );
+            await db.SaveChangesAsync();
+        }
+
+        if (!await db.ConfiguracionesSeguridad.AnyAsync())
+        {
+            db.ConfiguracionesSeguridad.Add(new ConfiguracionSeguridad
+            {
+                SucursalId = sucursal.Id,
+                IpAutorizada = sucursal.IpDefecto,
+                HorarioInicioCajeros = new TimeSpan(8, 0, 0),
+                HorarioFinCajeros = new TimeSpan(23, 0, 0),
+                AutorizarExcepcionHorasExtras = false,
+                FechaUltimaModificacion = DateTime.Now,
+                UsuarioModificoId = 1
+            });
+            await db.SaveChangesAsync();
+        }
+
+        const string tipografiaClasica = "Playfair Display & Montserrat";
+
+        var tematicasBase = new[]
+        {
+            (
+                Nombre: "Xilotzin Clásico",
+                Clave: "theme-classic",
+                ActivaPorDefecto: true,
+                Css: "/css/themes/classic.min.css",
+                Paleta: "{\"primary\":\"#E11D2F\",\"secondary\":\"#DCA54C\",\"background\":\"#0A0A0A\",\"surface\":\"#121212\",\"text\":\"#F5F5F5\",\"icon\":\"fa-clapperboard\"}",
+                Tipografia: tipografiaClasica
+            ),
+            (
+                Nombre: "Noche de Terror",
+                Clave: "theme-halloween",
+                ActivaPorDefecto: false,
+                Css: "/css/themes/halloween.min.css",
+                Paleta: "{\"primary\":\"#FF6D00\",\"secondary\":\"#9333EA\",\"background\":\"#09050F\",\"surface\":\"#160C24\",\"text\":\"#FAF5FF\",\"icon\":\"fa-ghost\"}",
+                Tipografia: "Cinzel & Montserrat"
+            ),
+            (
+                Nombre: "Navideño",
+                Clave: "theme-christmas",
+                ActivaPorDefecto: false,
+                Css: "/css/themes/christmas.min.css",
+                Paleta: "{\"primary\":\"#DC2626\",\"secondary\":\"#16A34A\",\"background\":\"#07110C\",\"surface\":\"#0F2117\",\"text\":\"#F8FAFC\",\"icon\":\"fa-snowflake\"}",
+                Tipografia: tipografiaClasica
+            ),
+            (
+                Nombre: "Fiestas Patrias",
+                Clave: "theme-patrias",
+                ActivaPorDefecto: false,
+                Css: "/css/themes/patrias.min.css",
+                Paleta: "{\"primary\":\"#006847\",\"secondary\":\"#CE1126\",\"background\":\"#090D0B\",\"surface\":\"#111A15\",\"text\":\"#FFFFFF\",\"icon\":\"fa-flag\"}",
+                Tipografia: tipografiaClasica
+            )
+        };
+
+        bool yaExisteActiva = await db.TematicasSitio.AnyAsync(t => t.EsActiva);
+        var existentes = await db.TematicasSitio
+            .Include(t => t.PlantillasCss)
+            .ToListAsync();
+
+        foreach (var item in tematicasBase)
+        {
+            var tematica = existentes.FirstOrDefault(t =>
+                string.Equals(t.ClaveIdentificadora, item.Clave, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(t.NombreTematica, item.Nombre, StringComparison.OrdinalIgnoreCase));
+
+            if (tematica == null)
+            {
+                bool activar = !yaExisteActiva && item.ActivaPorDefecto;
+                tematica = new TematicaSitio
+                {
+                    NombreTematica = item.Nombre,
+                    ClaveIdentificadora = item.Clave,
+                    EsActiva = activar,
+                    FechaActivacion = activar ? DateTime.Now : null
+                };
+                db.TematicasSitio.Add(tematica);
+                await db.SaveChangesAsync();
+
+                if (activar)
+                {
+                    yaExisteActiva = true;
+                }
+            }
+
+            if (tematica.PlantillasCss.Count == 0 &&
+                !await db.PlantillasCss.AnyAsync(p => p.TematicaId == tematica.Id))
+            {
+                db.PlantillasCss.Add(new PlantillaCss
+                {
+                    TematicaId = tematica.Id,
+                    RutaArchivoCss = item.Css,
+                    PaletaColoresJson = item.Paleta,
+                    Tipografia = item.Tipografia
+                });
+                await db.SaveChangesAsync();
+            }
+        }
+    }
+
     public static async Task SeedPreordenesDemoAsync(CineDbContext db)
     {
         var hoy = DateTime.Today;

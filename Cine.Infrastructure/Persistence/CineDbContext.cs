@@ -61,6 +61,16 @@ public partial class CineDbContext : DbContext, ICineDbContext
 
     public virtual DbSet<PagoVenta> PagoVentas { get; set; }
 
+    public virtual DbSet<Sucursal> Sucursales { get; set; }
+
+    public virtual DbSet<ConfiguracionSeguridad> ConfiguracionesSeguridad { get; set; }
+
+    public virtual DbSet<TurnoLaboral> TurnosLaborales { get; set; }
+
+    public virtual DbSet<TematicaSitio> TematicasSitio { get; set; }
+
+    public virtual DbSet<PlantillaCss> PlantillasCss { get; set; }
+
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -621,6 +631,136 @@ public partial class CineDbContext : DbContext, ICineDbContext
                 .HasForeignKey(d => d.IdVenta)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_pago_venta_venta");
+        });
+
+        modelBuilder.Entity<Sucursal>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_Sucursales");
+
+            entity.ToTable("Sucursales");
+
+            entity.Property(e => e.Id).HasColumnName("Id");
+            entity.Property(e => e.Nombre)
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .IsRequired()
+                .HasColumnName("Nombre");
+            entity.Property(e => e.IpDefecto)
+                .HasMaxLength(45)
+                .IsUnicode(false)
+                .IsRequired()
+                .HasColumnName("IpDefecto");
+        });
+
+        modelBuilder.Entity<ConfiguracionSeguridad>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_Configuracion_Seguridad");
+
+            entity.ToTable("Configuracion_Seguridad");
+
+            entity.Property(e => e.Id).HasColumnName("Id");
+            entity.Property(e => e.SucursalId).HasColumnName("SucursalId");
+            entity.Property(e => e.IpAutorizada)
+                .HasMaxLength(45)
+                .IsUnicode(false)
+                .IsRequired()
+                .HasColumnName("IpAutorizada");
+            entity.Property(e => e.HorarioInicioCajeros)
+                .HasColumnType("time")
+                .HasColumnName("HorarioInicioCajeros");
+            entity.Property(e => e.HorarioFinCajeros)
+                .HasColumnType("time")
+                .HasColumnName("HorarioFinCajeros");
+            entity.Property(e => e.AutorizarExcepcionHorasExtras)
+                .HasDefaultValue(false)
+                .HasColumnName("AutorizarExcepcionHorasExtras");
+            entity.Property(e => e.FechaUltimaModificacion)
+                .HasColumnType("datetime")
+                .HasColumnName("FechaUltimaModificacion");
+            entity.Property(e => e.UsuarioModificoId).HasColumnName("UsuarioModificoId");
+
+            entity.HasOne(d => d.SucursalNavigation)
+                .WithMany(p => p.ConfiguracionesSeguridad)
+                .HasForeignKey(d => d.SucursalId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_ConfiguracionSeguridad_Sucursal");
+        });
+
+        modelBuilder.Entity<TurnoLaboral>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_Turnos_Laborales");
+
+            entity.ToTable("Turnos_Laborales");
+
+            entity.Property(e => e.Id).HasColumnName("Id");
+            entity.Property(e => e.NombreTurno)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .IsRequired()
+                .HasColumnName("NombreTurno");
+            entity.Property(e => e.HoraInicio)
+                .HasColumnType("time")
+                .HasColumnName("HoraInicio");
+            entity.Property(e => e.HoraFin)
+                .HasColumnType("time")
+                .HasColumnName("HoraFin");
+        });
+
+        modelBuilder.Entity<TematicaSitio>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_Tematicas_Sitio");
+
+            entity.ToTable("Tematicas_Sitio");
+
+            entity.HasIndex(e => e.NombreTematica, "UQ_Tematicas_Sitio_NombreTematica").IsUnique();
+
+            entity.Property(e => e.Id).HasColumnName("Id");
+            entity.Property(e => e.NombreTematica)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .IsRequired()
+                .HasColumnName("NombreTematica");
+            entity.Property(e => e.ClaveIdentificadora)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .IsRequired()
+                .HasColumnName("ClaveIdentificadora");
+            entity.Property(e => e.EsActiva)
+                .HasDefaultValue(false)
+                .HasColumnName("EsActiva");
+            entity.Property(e => e.FechaActivacion)
+                .HasColumnType("datetime")
+                .HasColumnName("FechaActivacion");
+        });
+
+        modelBuilder.Entity<PlantillaCss>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_Plantillas_CSS");
+
+            entity.ToTable("Plantillas_CSS");
+
+            entity.Property(e => e.Id).HasColumnName("Id");
+            entity.Property(e => e.TematicaId).HasColumnName("TematicaId");
+            entity.Property(e => e.RutaArchivoCss)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .IsRequired()
+                .HasColumnName("RutaArchivoCss");
+            entity.Property(e => e.PaletaColoresJson)
+                .HasColumnType("nvarchar(max)")
+                .IsRequired()
+                .HasColumnName("PaletaColoresJson");
+            entity.Property(e => e.Tipografia)
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .IsRequired()
+                .HasColumnName("Tipografia");
+
+            entity.HasOne(d => d.TematicaNavigation)
+                .WithMany(p => p.PlantillasCss)
+                .HasForeignKey(d => d.TematicaId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_PlantillasCss_Tematica");
         });
 
         OnModelCreatingPartial(modelBuilder);
