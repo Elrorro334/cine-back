@@ -336,6 +336,77 @@ public class InventarioServiceTests
     }
 
     [Fact]
+    public async Task RegistrarEntradaMercancia_SincronizaInventarioStockFraccionado_YAmbosProductos()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        var maestroPizza = new Producto
+        {
+            IdProducto = 101,
+            Nombre = "Pizza Grande Completa",
+            CodigoBarras = "7501007",
+            PrecioVenta = 160m,
+            Costo = 80m,
+            StockActual = 5,
+            StockMinimo = 2,
+            FactorEquivalencia = 1
+        };
+        var fraccionRebanada = new Producto
+        {
+            IdProducto = 102,
+            Nombre = "Rebanada de Pizza",
+            CodigoBarras = "7501006",
+            PrecioVenta = 35m,
+            Costo = 10m,
+            StockActual = 40,
+            StockMinimo = 10,
+            FactorEquivalencia = 8
+        };
+        context.Productos.AddRange(maestroPizza, fraccionRebanada);
+        context.InventarioStockFraccionados.Add(new InventarioStockFraccionado
+        {
+            IdStockFraccionado = 1,
+            IdProductoMaestro = 101,
+            IdProductoFraccion = 102,
+            FactorFraccion = 8,
+            StockFraccionesActual = 40,
+            UltimaActualizacion = DateTime.Now
+        });
+        await context.SaveChangesAsync();
+
+        var service = new InventarioService(context);
+        var dto = new RegistrarEntradaDto
+        {
+            IdProveedor = 1,
+            FolioFactura = "F-FRAC-100",
+            TotalPagado = 300m,
+            Lineas = new List<RegistrarEntradaLineaDto>
+            {
+                new()
+                {
+                    IdProducto = 101,
+                    Cantidad = 3,
+                    CostoUnitario = 100m
+                }
+            }
+        };
+
+        // Act
+        var result = await service.RegistrarEntradaMercanciaAsync(dto);
+
+        // Assert
+        result.Should().NotBeNull();
+        var sf = await context.InventarioStockFraccionados.FirstAsync();
+        sf.StockFraccionesActual.Should().Be(64); // 40 iniciales + 24 de 3 pizzas * 8
+
+        var pFrac = await context.Productos.FindAsync(102);
+        pFrac!.StockActual.Should().Be(64);
+
+        var pMaestro = await context.Productos.FindAsync(101);
+        pMaestro!.StockActual.Should().Be(8);
+    }
+
+    [Fact]
     public async Task RegistrarEntradaMercancia_TotalMismatch_ThrowsInvalidOperationException()
     {
         // Arrange
@@ -528,5 +599,106 @@ public class InventarioServiceTests
             Lineas = new List<RegistrarEntradaLineaDto> { new() { IdProducto = 999, Cantidad = 1, CostoUnitario = 10m } }
         });
         await missingProdAct.Should().ThrowAsync<KeyNotFoundException>();
+    }
+
+    [Fact]
+    public async Task ObtenerInventarioPaginado_PaginatesBy15ItemsPerPage_AndClampsPage()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        for (int i = 1; i <= 35; i++)
+        {
+            context.Productos.Add(new Producto
+            {
+                IdProducto = 100 + i,
+                CodigoBarras = $"7509{i:D3}",
+                Nombre = $"Producto Extra {i:D2}",
+                IdCategoria = 3, // Bebidas
+                PrecioVenta = 40m + i,
+                Costo = 15m,
+                StockActual = i % 5 == 0 ? 0 : 25,
+                StockMinimo = 10,
+                FactorEquivalencia = 1,
+                Activo = true
+            });
+        }
+        await context.SaveChangesAsync();
+
+        var service = new InventarioService(context);
+
+        // Act: 4 base insumos + 35 nuevos = 39 insumos -> 3 páginas de 15 (15, 15, 9)
+        var pag1 = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto { Pagina = 1, TamanoPagina = 15 });
+        var pag3 = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto { Pagina = 3, TamanoPagina = 15 });
+        var pagFueraRango = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto { Pagina = 99, TamanoPagina = 15 });
+
+        // Assert
+        pag1.TotalRegistros.Should().Be(39);
+        pag1.TotalPaginas.Should().Be(3);
+        pag1.PaginaActual.Should().Be(1);
+        pag1.Items.Should().HaveCount(15);
+        pag1.CategoriasDisponibles.Should().Contain(new[] { "Bebidas", "Comida", "Dulces", "Snacks" });
+
+        pag3.PaginaActual.Should().Be(3);
+        pag3.Items.Should().HaveCount(9);
+
+        pagFueraRango.PaginaActual.Should().Be(3);
+        pagFueraRango.Items.Should().HaveCount(9);
+    }
+
+    [Fact]
+    public async Task ObtenerInventarioPaginado_FiltersByStockStatus_SearchAccentInsensitive_AndSorts()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        context.Productos.Add(new Producto
+        {
+            IdProducto = 200,
+            CodigoBarras = "7508888",
+            Nombre = "Bebida Agotada Especial",
+            IdCategoria = 3,
+            PrecioVenta = 50m,
+            Costo = 20m,
+            StockActual = 0,
+            StockMinimo = 10,
+            Activo = true
+        });
+        await context.SaveChangesAsync();
+
+        var service = new InventarioService(context);
+
+        // Act & Assert: búsqueda insensible a acentos y multi-palabra
+        var busquedaAcento = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+        {
+            Busqueda = "palomitas clasicas"
+        });
+        busquedaAcento.TotalRegistros.Should().Be(1);
+        busquedaAcento.Items[0].Sku.Should().Be("7501001");
+
+        // Act & Assert: filtro de estado de stock "agotado"
+        var agotados = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+        {
+            EstadoStock = "agotado"
+        });
+        agotados.TotalRegistros.Should().Be(1);
+        agotados.Items[0].Sku.Should().Be("7508888");
+        agotados.TotalAgotados.Should().Be(1);
+
+        // Act & Assert: filtro "alerta" (Nachos 15<=15, M&M's 5<=10, Bebida 0<=10)
+        var alerta = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+        {
+            EstadoStock = "alerta",
+            OrdenarPor = "stock_asc"
+        });
+        alerta.TotalRegistros.Should().Be(3);
+        alerta.Items.Select(i => i.StockActual).Should().BeInAscendingOrder();
+
+        // Act & Assert: filtro "optimo" y ordenamiento por margen descendente
+        var optimo = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+        {
+            EstadoStock = "optimo",
+            OrdenarPor = "margen_desc"
+        });
+        optimo.TotalRegistros.Should().Be(2);
+        optimo.Items[0].MargenPorcentaje.Should().BeGreaterThanOrEqualTo(optimo.Items[1].MargenPorcentaje);
     }
 }
