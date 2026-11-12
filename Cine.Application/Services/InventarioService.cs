@@ -193,7 +193,9 @@ public class InventarioService : IInventarioService
 
         _context.FacturasProveedor.Add(factura);
 
-        var entradasList = CrearEntradasYActualizarStock(dto.Lineas, productos, folioNormalizado, factura);
+        var stocksFraccionados = await _context.InventarioStockFraccionados.ToListAsync();
+
+        var entradasList = await CrearEntradasYActualizarStockAsync(dto.Lineas, productos, folioNormalizado, factura, stocksFraccionados);
 
         await _context.SaveChangesAsync();
 
@@ -263,11 +265,12 @@ public class InventarioService : IInventarioService
         }
     }
 
-    private List<EntradaMercancium> CrearEntradasYActualizarStock(
+    private async Task<List<EntradaMercancium>> CrearEntradasYActualizarStockAsync(
         List<RegistrarEntradaLineaDto> lineas,
         Dictionary<int, Producto> productos,
         string folioNormalizado,
-        FacturaProveedor factura)
+        FacturaProveedor factura,
+        List<InventarioStockFraccionado> stocksFraccionados)
     {
         var entradasList = new List<EntradaMercancium>();
 
@@ -294,6 +297,48 @@ public class InventarioService : IInventarioService
 
             entradasList.Add(entrada);
             _context.EntradaMercancia.Add(entrada);
+
+            // HU-07 + HU-11: Sincronizar tabla de stock fraccionado si el insumo es pizza o rebanada
+            var sf = stocksFraccionados.FirstOrDefault(s =>
+                s.IdProductoMaestro == prod.IdProducto || s.IdProductoFraccion == prod.IdProducto);
+
+            if (sf != null)
+            {
+                var factorFraccion = sf.FactorFraccion > 0 ? sf.FactorFraccion : 8;
+                bool esMaestro = prod.IdProducto == sf.IdProductoMaestro;
+
+                if (esMaestro)
+                {
+                    sf.StockFraccionesActual += linea.Cantidad * factorFraccion;
+                }
+                else
+                {
+                    sf.StockFraccionesActual += stockAgregado;
+                }
+
+                sf.UltimaActualizacion = DateTime.Now;
+
+                // Mantener consistentes los productos maestro y fracción
+                if (productos.TryGetValue(sf.IdProductoFraccion, out var prodFrac))
+                {
+                    prodFrac.StockActual = sf.StockFraccionesActual;
+                }
+                else
+                {
+                    var pFrac = await _context.Productos.FindAsync(sf.IdProductoFraccion);
+                    if (pFrac != null) pFrac.StockActual = sf.StockFraccionesActual;
+                }
+
+                if (productos.TryGetValue(sf.IdProductoMaestro, out var prodMaestro))
+                {
+                    prodMaestro.StockActual = sf.StockFraccionesActual / factorFraccion;
+                }
+                else
+                {
+                    var pMaestro = await _context.Productos.FindAsync(sf.IdProductoMaestro);
+                    if (pMaestro != null) pMaestro.StockActual = sf.StockFraccionesActual / factorFraccion;
+                }
+            }
         }
 
         return entradasList;

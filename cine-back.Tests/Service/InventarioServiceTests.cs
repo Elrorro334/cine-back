@@ -336,6 +336,77 @@ public class InventarioServiceTests
     }
 
     [Fact]
+    public async Task RegistrarEntradaMercancia_SincronizaInventarioStockFraccionado_YAmbosProductos()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        var maestroPizza = new Producto
+        {
+            IdProducto = 101,
+            Nombre = "Pizza Grande Completa",
+            CodigoBarras = "7501007",
+            PrecioVenta = 160m,
+            Costo = 80m,
+            StockActual = 5,
+            StockMinimo = 2,
+            FactorEquivalencia = 1
+        };
+        var fraccionRebanada = new Producto
+        {
+            IdProducto = 102,
+            Nombre = "Rebanada de Pizza",
+            CodigoBarras = "7501006",
+            PrecioVenta = 35m,
+            Costo = 10m,
+            StockActual = 40,
+            StockMinimo = 10,
+            FactorEquivalencia = 8
+        };
+        context.Productos.AddRange(maestroPizza, fraccionRebanada);
+        context.InventarioStockFraccionados.Add(new InventarioStockFraccionado
+        {
+            IdStockFraccionado = 1,
+            IdProductoMaestro = 101,
+            IdProductoFraccion = 102,
+            FactorFraccion = 8,
+            StockFraccionesActual = 40,
+            UltimaActualizacion = DateTime.Now
+        });
+        await context.SaveChangesAsync();
+
+        var service = new InventarioService(context);
+        var dto = new RegistrarEntradaDto
+        {
+            IdProveedor = 1,
+            FolioFactura = "F-FRAC-100",
+            TotalPagado = 300m,
+            Lineas = new List<RegistrarEntradaLineaDto>
+            {
+                new()
+                {
+                    IdProducto = 101,
+                    Cantidad = 3,
+                    CostoUnitario = 100m
+                }
+            }
+        };
+
+        // Act
+        var result = await service.RegistrarEntradaMercanciaAsync(dto);
+
+        // Assert
+        result.Should().NotBeNull();
+        var sf = await context.InventarioStockFraccionados.FirstAsync();
+        sf.StockFraccionesActual.Should().Be(64); // 40 iniciales + 24 de 3 pizzas * 8
+
+        var pFrac = await context.Productos.FindAsync(102);
+        pFrac!.StockActual.Should().Be(64);
+
+        var pMaestro = await context.Productos.FindAsync(101);
+        pMaestro!.StockActual.Should().Be(8);
+    }
+
+    [Fact]
     public async Task RegistrarEntradaMercancia_TotalMismatch_ThrowsInvalidOperationException()
     {
         // Arrange
