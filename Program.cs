@@ -104,12 +104,13 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 var app = builder.Build();
 
-// Siembra idempotente de butacas (HU-06) y catálogo de dulcería/stock fraccionado (HU-07).
+// Siembra idempotente de butacas (HU-06), catálogo de dulcería (HU-07) y seguridad/temáticas (HU-12).
 try
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<CineDbContext>();
     await DbSeeder.EnsureSprint3TablesAsync(db);
+    await DbSeeder.EnsureHu12TablesAsync(db);
     await DbSeeder.SeedButacasAsync(db);
     await DbSeeder.SeedDulceriaAsync(db);
 
@@ -132,6 +133,8 @@ try
         await db.SaveChangesAsync();
         await DbSeeder.SeedPreordenesDemoAsync(db);
     }
+
+    await DbSeeder.SeedSeguridadYTematicasAsync(db);
 }
 catch (Exception ex)
 {
