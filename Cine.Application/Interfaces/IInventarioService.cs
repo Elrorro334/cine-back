@@ -13,6 +13,12 @@ public interface IInventarioService
     Task<List<InsumoInventarioDto>> ObtenerInventarioMaestroAsync(string? categoria = null, string? busqueda = null);
 
     /// <summary>
+    /// Obtiene el inventario maestro paginado (15 registros por página por defecto),
+    /// con búsqueda acento-insensible, filtro de estado de stock, ordenamiento y contadores reales.
+    /// </summary>
+    Task<InventarioPaginadoDto> ObtenerInventarioPaginadoAsync(InventarioFiltroDto filtro);
+
+    /// <summary>
     /// Obtiene un insumo individual con su margen calculado.
     /// </summary>
     Task<InsumoInventarioDto> ObtenerInsumoPorIdAsync(int idProducto);

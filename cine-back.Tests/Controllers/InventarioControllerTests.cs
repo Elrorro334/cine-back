@@ -273,6 +273,43 @@ public class InventarioControllerTests
     }
 
     [Fact]
+    public async Task GetInsumosPaginado_ReturnsOkWithPaginatedDto()
+    {
+        // Arrange
+        var paginado = new InventarioPaginadoDto
+        {
+            PaginaActual = 2,
+            TamanoPagina = 15,
+            TotalRegistros = 35,
+            TotalPaginas = 3,
+            TotalEnAlerta = 4,
+            TotalAgotados = 1,
+            CategoriasDisponibles = new List<string> { "Bebidas", "Comida", "Dulces", "Pizzas", "Snacks" },
+            Items = new List<InsumoInventarioDto>()
+        };
+
+        _serviceMock
+            .Setup(s => s.ObtenerInventarioPaginadoAsync(It.Is<InventarioFiltroDto>(f =>
+                f.Categoria == "Snacks" &&
+                f.Busqueda == "palomitas" &&
+                f.EstadoStock == "alerta" &&
+                f.OrdenarPor == "stock_asc" &&
+                f.Pagina == 2 &&
+                f.TamanoPagina == 15)))
+            .ReturnsAsync(paginado);
+
+        // Act
+        var result = await _controller.GetInsumosPaginado("Snacks", "palomitas", "alerta", "stock_asc", 2, 15);
+
+        // Assert
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var value = okResult.Value.Should().BeOfType<InventarioPaginadoDto>().Subject;
+        value.PaginaActual.Should().Be(2);
+        value.TamanoPagina.Should().Be(15);
+        value.TotalRegistros.Should().Be(35);
+    }
+
+    [Fact]
     public async Task RegistrarEntrada_WhenModelStateInvalid_ReturnsBadRequest()
     {
         _controller.ModelState.AddModelError("FolioFactura", "Requerido");

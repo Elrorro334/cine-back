@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Cine.Application.Dtos;
 using Cine.Application.Interfaces;
@@ -20,51 +22,61 @@ public class InventarioService : IInventarioService
 
     public async Task<List<InsumoInventarioDto>> ObtenerInventarioMaestroAsync(string? categoria = null, string? busqueda = null)
     {
-        var query = _context.Productos
+        var productos = await _context.Productos
             .Include(p => p.IdCategoriaNavigation)
-            .Where(p => p.Activo);
+            .Where(p => p.Activo)
+            .ToListAsync();
 
-        var productos = await query.ToListAsync();
+        var filtrados = FiltrarYMapearInsumos(productos, categoria, busqueda);
+        return OrdenarInsumos(filtrados, null);
+    }
 
-        // 1. Filtrar exclusiones (Taquilla y Combos) y aplicar mapeo oficial acordado
-        var resultado = new List<InsumoInventarioDto>();
+    public async Task<InventarioPaginadoDto> ObtenerInventarioPaginadoAsync(InventarioFiltroDto filtro)
+    {
+        ArgumentNullException.ThrowIfNull(filtro);
 
-        foreach (var p in productos)
+        var productos = await _context.Productos
+            .Include(p => p.IdCategoriaNavigation)
+            .Where(p => p.Activo)
+            .AsNoTracking()
+            .ToListAsync();
+
+        var categoriasDisponibles = productos
+            .Select(p => p.IdCategoriaNavigation?.Nombre?.Trim() ?? string.Empty)
+            .Where(EsCategoriaInsumoValida)
+            .Select(MapearCategoria)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(c => c)
+            .ToList();
+
+        var baseFiltrada = FiltrarYMapearInsumos(productos, filtro.Categoria, filtro.Busqueda);
+        var totalEnAlerta = baseFiltrada.Count(x => x.EnAlerta);
+        var totalAgotados = baseFiltrada.Count(x => x.StockActual == 0);
+
+        var conEstado = AplicarFiltroEstadoStock(baseFiltrada, filtro.EstadoStock);
+        var ordenados = OrdenarInsumos(conEstado, filtro.OrdenarPor);
+
+        var tamanoPagina = Math.Clamp(filtro.TamanoPagina <= 0 ? 15 : filtro.TamanoPagina, 1, 100);
+        var totalRegistros = ordenados.Count;
+        var totalPaginas = totalRegistros == 0 ? 1 : (int)Math.Ceiling(totalRegistros / (double)tamanoPagina);
+        var paginaActual = Math.Clamp(filtro.Pagina <= 0 ? 1 : filtro.Pagina, 1, totalPaginas);
+
+        var items = ordenados
+            .Skip((paginaActual - 1) * tamanoPagina)
+            .Take(tamanoPagina)
+            .ToList();
+
+        return new InventarioPaginadoDto
         {
-            var nombreCat = p.IdCategoriaNavigation?.Nombre?.Trim() ?? string.Empty;
-
-            // Excluir Taquilla y Combos del inventario maestro de insumos
-            if (nombreCat.Equals("Taquilla", StringComparison.OrdinalIgnoreCase) ||
-                nombreCat.Equals("Combos", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var catMapeada = MapearCategoria(nombreCat);
-
-            // Filtro por categoría si se especificó
-            if (!string.IsNullOrWhiteSpace(categoria) &&
-                !catMapeada.Equals(categoria.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            // Filtro por término de búsqueda (SKU o nombre)
-            if (!string.IsNullOrWhiteSpace(busqueda))
-            {
-                var term = busqueda.Trim().ToLower();
-                var coincideSku = p.CodigoBarras.ToLower().Contains(term);
-                var coincideNombre = p.Nombre.ToLower().Contains(term);
-                if (!coincideSku && !coincideNombre)
-                {
-                    continue;
-                }
-            }
-
-            resultado.Add(MapearAInsumoDto(p, catMapeada));
-        }
-
-        return resultado.OrderBy(p => p.Categoria).ThenBy(p => p.Producto).ToList();
+            Items = items,
+            PaginaActual = paginaActual,
+            TamanoPagina = tamanoPagina,
+            TotalRegistros = totalRegistros,
+            TotalPaginas = totalPaginas,
+            TotalEnAlerta = totalEnAlerta,
+            TotalAgotados = totalAgotados,
+            CategoriasDisponibles = categoriasDisponibles
+        };
     }
 
     public async Task<InsumoInventarioDto> ObtenerInsumoPorIdAsync(int idProducto)
@@ -181,7 +193,9 @@ public class InventarioService : IInventarioService
 
         _context.FacturasProveedor.Add(factura);
 
-        var entradasList = CrearEntradasYActualizarStock(dto.Lineas, productos, folioNormalizado, factura);
+        var stocksFraccionados = await _context.InventarioStockFraccionados.ToListAsync();
+
+        var entradasList = await CrearEntradasYActualizarStockAsync(dto.Lineas, productos, folioNormalizado, factura, stocksFraccionados);
 
         await _context.SaveChangesAsync();
 
@@ -251,11 +265,12 @@ public class InventarioService : IInventarioService
         }
     }
 
-    private List<EntradaMercancium> CrearEntradasYActualizarStock(
+    private async Task<List<EntradaMercancium>> CrearEntradasYActualizarStockAsync(
         List<RegistrarEntradaLineaDto> lineas,
         Dictionary<int, Producto> productos,
         string folioNormalizado,
-        FacturaProveedor factura)
+        FacturaProveedor factura,
+        List<InventarioStockFraccionado> stocksFraccionados)
     {
         var entradasList = new List<EntradaMercancium>();
 
@@ -282,6 +297,48 @@ public class InventarioService : IInventarioService
 
             entradasList.Add(entrada);
             _context.EntradaMercancia.Add(entrada);
+
+            // HU-07 + HU-11: Sincronizar tabla de stock fraccionado si el insumo es pizza o rebanada
+            var sf = stocksFraccionados.FirstOrDefault(s =>
+                s.IdProductoMaestro == prod.IdProducto || s.IdProductoFraccion == prod.IdProducto);
+
+            if (sf != null)
+            {
+                var factorFraccion = sf.FactorFraccion > 0 ? sf.FactorFraccion : 8;
+                bool esMaestro = prod.IdProducto == sf.IdProductoMaestro;
+
+                if (esMaestro)
+                {
+                    sf.StockFraccionesActual += linea.Cantidad * factorFraccion;
+                }
+                else
+                {
+                    sf.StockFraccionesActual += stockAgregado;
+                }
+
+                sf.UltimaActualizacion = DateTime.Now;
+
+                // Mantener consistentes los productos maestro y fracción
+                if (productos.TryGetValue(sf.IdProductoFraccion, out var prodFrac))
+                {
+                    prodFrac.StockActual = sf.StockFraccionesActual;
+                }
+                else
+                {
+                    var pFrac = await _context.Productos.FindAsync(sf.IdProductoFraccion);
+                    if (pFrac != null) pFrac.StockActual = sf.StockFraccionesActual;
+                }
+
+                if (productos.TryGetValue(sf.IdProductoMaestro, out var prodMaestro))
+                {
+                    prodMaestro.StockActual = sf.StockFraccionesActual / factorFraccion;
+                }
+                else
+                {
+                    var pMaestro = await _context.Productos.FindAsync(sf.IdProductoMaestro);
+                    if (pMaestro != null) pMaestro.StockActual = sf.StockFraccionesActual / factorFraccion;
+                }
+            }
         }
 
         return entradasList;
@@ -301,6 +358,128 @@ public class InventarioService : IInventarioService
                 Contacto = p.Contacto
             })
             .ToListAsync();
+    }
+
+    private static List<InsumoInventarioDto> FiltrarYMapearInsumos(
+        List<Producto> productos,
+        string? categoria,
+        string? busqueda)
+    {
+        var tokensBusqueda = TokenizarBusqueda(busqueda);
+        var resultado = new List<InsumoInventarioDto>();
+
+        foreach (var p in productos)
+        {
+            var nombreCat = p.IdCategoriaNavigation?.Nombre?.Trim() ?? string.Empty;
+            if (!EsCategoriaInsumoValida(nombreCat))
+            {
+                continue;
+            }
+
+            var catMapeada = MapearCategoria(nombreCat);
+
+            if (!CoincideCategoria(categoria, catMapeada, nombreCat))
+            {
+                continue;
+            }
+
+            if (!CoincideBusqueda(p, catMapeada, nombreCat, tokensBusqueda))
+            {
+                continue;
+            }
+
+            resultado.Add(MapearAInsumoDto(p, catMapeada));
+        }
+
+        return resultado;
+    }
+
+    private static bool EsCategoriaInsumoValida(string nombreCat)
+    {
+        return !nombreCat.Equals("Taquilla", StringComparison.OrdinalIgnoreCase) &&
+               !nombreCat.Equals("Combos", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool CoincideCategoria(string? filtroCategoria, string catMapeada, string nombreOriginal)
+    {
+        if (string.IsNullOrWhiteSpace(filtroCategoria) ||
+            filtroCategoria.Trim().Equals("Todas", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var filtroNorm = NormalizarTexto(filtroCategoria);
+        return NormalizarTexto(catMapeada) == filtroNorm ||
+               NormalizarTexto(nombreOriginal) == filtroNorm;
+    }
+
+    private static string[] TokenizarBusqueda(string? busqueda)
+    {
+        if (string.IsNullOrWhiteSpace(busqueda)) return Array.Empty<string>();
+        return NormalizarTexto(busqueda)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static bool CoincideBusqueda(
+        Producto producto,
+        string catMapeada,
+        string nombreOriginal,
+        string[] tokens)
+    {
+        if (tokens.Length == 0) return true;
+
+        var textoIndexado = $"{NormalizarTexto(producto.CodigoBarras)} {NormalizarTexto(producto.Nombre)} {NormalizarTexto(catMapeada)} {NormalizarTexto(nombreOriginal)}";
+        return tokens.All(t => textoIndexado.Contains(t, StringComparison.Ordinal));
+    }
+
+    private static List<InsumoInventarioDto> AplicarFiltroEstadoStock(
+        List<InsumoInventarioDto> insumos,
+        string? estadoStock)
+    {
+        return (estadoStock?.Trim().ToLowerInvariant()) switch
+        {
+            "alerta" => insumos.Where(x => x.EnAlerta).ToList(),
+            "agotado" => insumos.Where(x => x.StockActual == 0).ToList(),
+            "optimo" => insumos.Where(x => !x.EnAlerta).ToList(),
+            _ => insumos
+        };
+    }
+
+    private static List<InsumoInventarioDto> OrdenarInsumos(
+        IEnumerable<InsumoInventarioDto> insumos,
+        string? ordenarPor)
+    {
+        return (ordenarPor?.Trim().ToLowerInvariant()) switch
+        {
+            "producto_asc" => insumos.OrderBy(x => x.Producto).ThenBy(x => x.Sku).ToList(),
+            "producto_desc" => insumos.OrderByDescending(x => x.Producto).ThenBy(x => x.Sku).ToList(),
+            "sku_asc" => insumos.OrderBy(x => x.Sku).ToList(),
+            "stock_asc" => insumos.OrderBy(x => x.StockActual).ThenBy(x => x.Producto).ToList(),
+            "stock_desc" => insumos.OrderByDescending(x => x.StockActual).ThenBy(x => x.Producto).ToList(),
+            "margen_asc" => insumos.OrderBy(x => x.MargenPorcentaje).ThenBy(x => x.Producto).ToList(),
+            "margen_desc" => insumos.OrderByDescending(x => x.MargenPorcentaje).ThenBy(x => x.Producto).ToList(),
+            "precio_asc" => insumos.OrderBy(x => x.PrecioVenta).ThenBy(x => x.Producto).ToList(),
+            "precio_desc" => insumos.OrderByDescending(x => x.PrecioVenta).ThenBy(x => x.Producto).ToList(),
+            _ => insumos.OrderBy(x => x.Categoria).ThenBy(x => x.Producto).ToList()
+        };
+    }
+
+    private static string NormalizarTexto(string? texto)
+    {
+        if (string.IsNullOrWhiteSpace(texto)) return string.Empty;
+
+        var formD = texto.Trim().Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(formD.Length);
+
+        foreach (var ch in formD)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+            {
+                sb.Append(char.ToLowerInvariant(ch));
+            }
+        }
+
+        return sb.ToString().Normalize(NormalizationForm.FormC);
     }
 
     private static string MapearCategoria(string? categoriaOriginal)
@@ -333,6 +512,7 @@ public class InventarioService : IInventarioService
             "Bebidas" => "fa-glass-water",
             "Dulces" => "fa-candy-cane",
             "Comida" => "fa-burger",
+            "Pizzas" => "fa-pizza-slice",
             _ => "fa-boxes-stacked"
         };
 

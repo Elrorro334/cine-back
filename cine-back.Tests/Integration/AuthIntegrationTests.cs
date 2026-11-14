@@ -111,7 +111,6 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
     // =========================================================================
 
     [Theory]
-    [InlineData("/api/taquilla/dulceria")]
     [InlineData("/api/taquilla/dulceria/catalogo-pos")]
     [InlineData("/api/taquilla/dulceria/sku/7501001")]
     public async Task DulceriaPosGetEndpoints_WithoutJwtToken_ReturnsUnauthorized(string endpoint)
@@ -121,6 +120,16 @@ public class AuthIntegrationTests : IClassFixture<WebApplicationFactory<Program>
         var response = await client.GetAsync(endpoint);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task DulceriaPublica_WithoutJwtToken_AllowsAnonymousAndReturnsOk()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/taquilla/dulceria");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]

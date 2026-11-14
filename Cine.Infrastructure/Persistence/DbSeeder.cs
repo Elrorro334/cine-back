@@ -373,41 +373,39 @@ END;");
             await db.SaveChangesAsync();
         }
 
-        const string tipografiaClasica = "Playfair Display & Montserrat";
-
         var tematicasBase = new[]
         {
             (
-                Nombre: "Xilotzin Clásico",
+                Nombre: "Cine Tradicional (Xilotzin Clásico)",
                 Clave: "theme-classic",
                 ActivaPorDefecto: true,
                 Css: "/css/themes/classic.min.css",
-                Paleta: "{\"primary\":\"#E11D2F\",\"secondary\":\"#DCA54C\",\"background\":\"#0A0A0A\",\"surface\":\"#121212\",\"text\":\"#F5F5F5\",\"icon\":\"fa-clapperboard\"}",
-                Tipografia: tipografiaClasica
+                Paleta: "{\"primary\":\"#E11D2F\",\"secondary\":\"#DCA54C\",\"background\":\"#0A0A0A\",\"surface\":\"#141414\",\"text\":\"#E0E0E0\",\"icon\":\"fa-film\"}",
+                Tipografia: "Playfair Display & Montserrat"
             ),
             (
-                Nombre: "Noche de Terror",
+                Nombre: "Noche de Terror (Halloween)",
                 Clave: "theme-halloween",
                 ActivaPorDefecto: false,
                 Css: "/css/themes/halloween.min.css",
-                Paleta: "{\"primary\":\"#FF6D00\",\"secondary\":\"#9333EA\",\"background\":\"#09050F\",\"surface\":\"#160C24\",\"text\":\"#FAF5FF\",\"icon\":\"fa-ghost\"}",
-                Tipografia: "Cinzel & Montserrat"
+                Paleta: "{\"primary\":\"#FF5500\",\"secondary\":\"#7E22CE\",\"background\":\"#0C0217\",\"surface\":\"#18072E\",\"text\":\"#F3E8FF\",\"icon\":\"fa-ghost\"}",
+                Tipografia: "Creepster & Montserrat"
             ),
             (
-                Nombre: "Navideño",
+                Nombre: "Especial Navideño e Invernal",
                 Clave: "theme-christmas",
                 ActivaPorDefecto: false,
                 Css: "/css/themes/christmas.min.css",
-                Paleta: "{\"primary\":\"#DC2626\",\"secondary\":\"#16A34A\",\"background\":\"#07110C\",\"surface\":\"#0F2117\",\"text\":\"#F8FAFC\",\"icon\":\"fa-snowflake\"}",
-                Tipografia: tipografiaClasica
+                Paleta: "{\"primary\":\"#DC2626\",\"secondary\":\"#15803D\",\"background\":\"#03140C\",\"surface\":\"#0A2B1A\",\"text\":\"#FFFFFF\",\"icon\":\"fa-snowflake\"}",
+                Tipografia: "Mountains of Christmas & Montserrat"
             ),
             (
-                Nombre: "Fiestas Patrias",
+                Nombre: "Fiestas Patrias & Tradición Mexicana",
                 Clave: "theme-patrias",
                 ActivaPorDefecto: false,
                 Css: "/css/themes/patrias.min.css",
-                Paleta: "{\"primary\":\"#006847\",\"secondary\":\"#CE1126\",\"background\":\"#090D0B\",\"surface\":\"#111A15\",\"text\":\"#FFFFFF\",\"icon\":\"fa-flag\"}",
-                Tipografia: tipografiaClasica
+                Paleta: "{\"primary\":\"#00843D\",\"secondary\":\"#CE1126\",\"background\":\"#07160E\",\"surface\":\"#0E291B\",\"text\":\"#FFFFFF\",\"icon\":\"fa-flag\"}",
+                Tipografia: "Rye / Alfa Slab One & Montserrat"
             )
         };
 
@@ -420,7 +418,9 @@ END;");
         {
             var tematica = existentes.FirstOrDefault(t =>
                 string.Equals(t.ClaveIdentificadora, item.Clave, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(t.NombreTematica, item.Nombre, StringComparison.OrdinalIgnoreCase));
+                string.Equals(t.NombreTematica, item.Nombre, StringComparison.OrdinalIgnoreCase) ||
+                (item.Clave == "theme-traditional" && t.ClaveIdentificadora == "theme-classic") ||
+                (item.Clave == "theme-mexican" && t.ClaveIdentificadora == "theme-patrias"));
 
             if (tematica == null)
             {
@@ -440,9 +440,17 @@ END;");
                     yaExisteActiva = true;
                 }
             }
+            else
+            {
+                tematica.NombreTematica = item.Nombre;
+                tematica.ClaveIdentificadora = item.Clave;
+                await db.SaveChangesAsync();
+            }
 
-            if (tematica.PlantillasCss.Count == 0 &&
-                !await db.PlantillasCss.AnyAsync(p => p.TematicaId == tematica.Id))
+            var plantilla = tematica.PlantillasCss.FirstOrDefault() ??
+                            await db.PlantillasCss.FirstOrDefaultAsync(p => p.TematicaId == tematica.Id);
+
+            if (plantilla == null)
             {
                 db.PlantillasCss.Add(new PlantillaCss
                 {
@@ -451,6 +459,13 @@ END;");
                     PaletaColoresJson = item.Paleta,
                     Tipografia = item.Tipografia
                 });
+                await db.SaveChangesAsync();
+            }
+            else
+            {
+                plantilla.RutaArchivoCss = item.Css;
+                plantilla.PaletaColoresJson = item.Paleta;
+                plantilla.Tipografia = item.Tipografia;
                 await db.SaveChangesAsync();
             }
         }

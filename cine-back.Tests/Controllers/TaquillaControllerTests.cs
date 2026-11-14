@@ -125,6 +125,16 @@ public class TaquillaControllerTests
     }
 
     [Fact]
+    public void GetDulceria_TieneAllowAnonymousParaAccesoPublicoPwa()
+    {
+        var method = typeof(TaquillaController).GetMethod(nameof(TaquillaController.GetDulceria));
+        method.Should().NotBeNull();
+        var allowAnon = method!
+            .GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute), inherit: true);
+        allowAnon.Should().NotBeEmpty();
+    }
+
+    [Fact]
     public async Task GetCatalogoDulceriaPos_ReturnsOkWithCatalogo()
     {
         var catalogo = new CatalogoDulceriaPosDto
