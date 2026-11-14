@@ -136,3 +136,31 @@ public class ProveedorDto
     public string? Telefono { get; set; }
     public string? Contacto { get; set; }
 }
+
+/// <summary>
+/// Parámetros de filtrado, búsqueda, ordenamiento y paginación para el Inventario Maestro
+/// </summary>
+public class InventarioFiltroDto
+{
+    public string? Categoria { get; set; }
+    public string? Busqueda { get; set; }
+    public string? EstadoStock { get; set; }
+    public string? OrdenarPor { get; set; }
+    public int Pagina { get; set; } = 1;
+    public int TamanoPagina { get; set; } = 15;
+}
+
+/// <summary>
+/// Respuesta paginada del Inventario Maestro con metadatos y resumen de alertas calculados en servidor
+/// </summary>
+public class InventarioPaginadoDto
+{
+    public List<InsumoInventarioDto> Items { get; set; } = new();
+    public int PaginaActual { get; set; } = 1;
+    public int TamanoPagina { get; set; } = 15;
+    public int TotalRegistros { get; set; }
+    public int TotalPaginas { get; set; }
+    public int TotalEnAlerta { get; set; }
+    public int TotalAgotados { get; set; }
+    public List<string> CategoriasDisponibles { get; set; } = new();
+}

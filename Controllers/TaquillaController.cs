@@ -56,6 +56,7 @@ public class TaquillaController : ControllerBase
     /// Presiona "Try it out" y luego "Execute" (no requiere parámetros).
     /// ```
     /// </remarks>
+    [AllowAnonymous]
     [HttpGet("dulceria")]
     public async Task<IActionResult> GetDulceria()
     {
