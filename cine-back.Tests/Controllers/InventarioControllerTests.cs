@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Security.Claims;
 using System.Threading.Tasks;
 using cine_back.Controllers;
 using Cine.Application.Dtos;
 using Cine.Application.Interfaces;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using Xunit;
@@ -314,6 +316,56 @@ public class InventarioControllerTests
     {
         _controller.ModelState.AddModelError("FolioFactura", "Requerido");
         var result = await _controller.RegistrarEntrada(new RegistrarEntradaDto());
+
+        result.Result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task RegistrarEntrada_WhenAuthenticatedUser_ReturnsCreated()
+    {
+        var dto = new RegistrarEntradaDto { IdProveedor = 1, FolioFactura = "FAC-123", TotalPagado = 100m };
+        var esperado = new EntradaHistorialDto { Factura = "FAC-123", TotalPagado = 100m };
+
+        _serviceMock.Setup(s => s.RegistrarEntradaMercanciaAsync(dto, 42))
+            .ReturnsAsync(esperado);
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, "42")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext { User = user }
+        };
+
+        var result = await _controller.RegistrarEntrada(dto);
+
+        var objectResult = result.Result.Should().BeOfType<ObjectResult>().Subject;
+        objectResult.StatusCode.Should().Be(StatusCodes.Status201Created);
+        objectResult.Value.Should().BeEquivalentTo(esperado);
+    }
+
+    [Fact]
+    public async Task RegistrarEntrada_WhenKeyNotFoundException_ReturnsNotFound()
+    {
+        var dto = new RegistrarEntradaDto { IdProveedor = 99, FolioFactura = "FAC-999", TotalPagado = 50m };
+        _serviceMock.Setup(s => s.RegistrarEntradaMercanciaAsync(dto, It.IsAny<int?>()))
+            .ThrowsAsync(new KeyNotFoundException("Proveedor no encontrado"));
+
+        var result = await _controller.RegistrarEntrada(dto);
+
+        result.Result.Should().BeOfType<NotFoundObjectResult>();
+    }
+
+    [Fact]
+    public async Task RegistrarEntrada_WhenInvalidOperationException_ReturnsBadRequest()
+    {
+        var dto = new RegistrarEntradaDto { IdProveedor = 1, FolioFactura = "FAC-NEG", TotalPagado = 50m };
+        _serviceMock.Setup(s => s.RegistrarEntradaMercanciaAsync(dto, It.IsAny<int?>()))
+            .ThrowsAsync(new InvalidOperationException("Margen negativo detectado"));
+
+        var result = await _controller.RegistrarEntrada(dto);
 
         result.Result.Should().BeOfType<BadRequestObjectResult>();
     }

@@ -276,72 +276,84 @@ public class InventarioService : IInventarioService
 
         foreach (var linea in lineas)
         {
-            var prod = productos[linea.IdProducto];
-            var factor = prod.FactorEquivalencia > 0 ? prod.FactorEquivalencia : 1;
-            var stockAgregado = linea.Cantidad * factor;
-
-            prod.StockActual += stockAgregado;
-            prod.Costo = linea.CostoUnitario;
-
-            var entrada = new EntradaMercancium
-            {
-                IdProducto = prod.IdProducto,
-                FolioFactura = folioNormalizado,
-                Cantidad = linea.Cantidad,
-                CostoUnitario = linea.CostoUnitario,
-                CostoTotal = linea.Cantidad * linea.CostoUnitario,
-                CantidadStockAgregada = stockAgregado,
-                FechaEntrada = DateTime.UtcNow,
-                IdFacturaNavigation = factura
-            };
-
+            var entrada = RegistrarLineaEntrada(linea, productos, folioNormalizado, factura);
             entradasList.Add(entrada);
-            _context.EntradaMercancia.Add(entrada);
-
-            // HU-07 + HU-11: Sincronizar tabla de stock fraccionado si el insumo es pizza o rebanada
-            var sf = stocksFraccionados.FirstOrDefault(s =>
-                s.IdProductoMaestro == prod.IdProducto || s.IdProductoFraccion == prod.IdProducto);
-
-            if (sf != null)
-            {
-                var factorFraccion = sf.FactorFraccion > 0 ? sf.FactorFraccion : 8;
-                bool esMaestro = prod.IdProducto == sf.IdProductoMaestro;
-
-                if (esMaestro)
-                {
-                    sf.StockFraccionesActual += linea.Cantidad * factorFraccion;
-                }
-                else
-                {
-                    sf.StockFraccionesActual += stockAgregado;
-                }
-
-                sf.UltimaActualizacion = DateTime.Now;
-
-                // Mantener consistentes los productos maestro y fracción
-                if (productos.TryGetValue(sf.IdProductoFraccion, out var prodFrac))
-                {
-                    prodFrac.StockActual = sf.StockFraccionesActual;
-                }
-                else
-                {
-                    var pFrac = await _context.Productos.FindAsync(sf.IdProductoFraccion);
-                    if (pFrac != null) pFrac.StockActual = sf.StockFraccionesActual;
-                }
-
-                if (productos.TryGetValue(sf.IdProductoMaestro, out var prodMaestro))
-                {
-                    prodMaestro.StockActual = sf.StockFraccionesActual / factorFraccion;
-                }
-                else
-                {
-                    var pMaestro = await _context.Productos.FindAsync(sf.IdProductoMaestro);
-                    if (pMaestro != null) pMaestro.StockActual = sf.StockFraccionesActual / factorFraccion;
-                }
-            }
+            await SincronizarStockFraccionadoLineaAsync(linea, productos, entrada.CantidadStockAgregada, stocksFraccionados);
         }
 
         return entradasList;
+    }
+
+    private EntradaMercancium RegistrarLineaEntrada(
+        RegistrarEntradaLineaDto linea,
+        Dictionary<int, Producto> productos,
+        string folioNormalizado,
+        FacturaProveedor factura)
+    {
+        var prod = productos[linea.IdProducto];
+        var factor = prod.FactorEquivalencia > 0 ? prod.FactorEquivalencia : 1;
+        var stockAgregado = linea.Cantidad * factor;
+
+        prod.StockActual += stockAgregado;
+        prod.Costo = linea.CostoUnitario;
+
+        var entrada = new EntradaMercancium
+        {
+            IdProducto = prod.IdProducto,
+            FolioFactura = folioNormalizado,
+            Cantidad = linea.Cantidad,
+            CostoUnitario = linea.CostoUnitario,
+            CostoTotal = linea.Cantidad * linea.CostoUnitario,
+            CantidadStockAgregada = stockAgregado,
+            FechaEntrada = DateTime.UtcNow,
+            IdFacturaNavigation = factura
+        };
+
+        _context.EntradaMercancia.Add(entrada);
+        return entrada;
+    }
+
+    private async Task SincronizarStockFraccionadoLineaAsync(
+        RegistrarEntradaLineaDto linea,
+        Dictionary<int, Producto> productos,
+        int stockAgregado,
+        List<InventarioStockFraccionado> stocksFraccionados)
+    {
+        var prod = productos[linea.IdProducto];
+        var sf = stocksFraccionados.FirstOrDefault(s =>
+            s.IdProductoMaestro == prod.IdProducto || s.IdProductoFraccion == prod.IdProducto);
+
+        if (sf == null) return;
+
+        var factorFraccion = sf.FactorFraccion > 0 ? sf.FactorFraccion : 8;
+        bool esMaestro = prod.IdProducto == sf.IdProductoMaestro;
+
+        sf.StockFraccionesActual += esMaestro
+            ? linea.Cantidad * factorFraccion
+            : stockAgregado;
+
+        sf.UltimaActualizacion = DateTime.Now;
+
+        await SincronizarProductoStockAsync(sf.IdProductoFraccion, sf.StockFraccionesActual, productos);
+        await SincronizarProductoStockAsync(sf.IdProductoMaestro, sf.StockFraccionesActual / factorFraccion, productos);
+    }
+
+    private async Task SincronizarProductoStockAsync(
+        int idProducto,
+        int nuevoStock,
+        Dictionary<int, Producto> productos)
+    {
+        if (productos.TryGetValue(idProducto, out var prod))
+        {
+            prod.StockActual = nuevoStock;
+            return;
+        }
+
+        var p = await _context.Productos.FindAsync(idProducto);
+        if (p != null)
+        {
+            p.StockActual = nuevoStock;
+        }
     }
 
     public async Task<List<ProveedorDto>> ObtenerProveedoresAsync()
