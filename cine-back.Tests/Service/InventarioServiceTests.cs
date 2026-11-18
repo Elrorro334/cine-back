@@ -14,6 +14,8 @@ namespace cine_back.Tests.Services;
 
 public class InventarioServiceTests
 {
+    private static readonly string[] CategoriasEsperadas = ["Bebidas", "Comida", "Dulces", "Snacks"];
+
     private static CineDbContext CreateInMemoryDbContext()
     {
         var options = new DbContextOptionsBuilder<CineDbContext>()
@@ -636,7 +638,7 @@ public class InventarioServiceTests
         pag1.TotalPaginas.Should().Be(3);
         pag1.PaginaActual.Should().Be(1);
         pag1.Items.Should().HaveCount(15);
-        pag1.CategoriasDisponibles.Should().Contain(new[] { "Bebidas", "Comida", "Dulces", "Snacks" });
+        pag1.CategoriasDisponibles.Should().Contain(CategoriasEsperadas);
 
         pag3.PaginaActual.Should().Be(3);
         pag3.Items.Should().HaveCount(9);
@@ -700,5 +702,164 @@ public class InventarioServiceTests
         });
         optimo.TotalRegistros.Should().Be(2);
         optimo.Items[0].MargenPorcentaje.Should().BeGreaterThanOrEqualTo(optimo.Items[1].MargenPorcentaje);
+    }
+
+    [Fact]
+    public async Task RegistrarEntradaMercancia_EntradaRebanadaFraccion_ActualizaStockFraccionadoYMaestro()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        var pizzaMaestra = new Producto
+        {
+            IdProducto = 301,
+            CodigoBarras = "PIZZA-001",
+            Nombre = "Pizza Familiar",
+            PrecioVenta = 200m,
+            Costo = 80m,
+            StockActual = 2,
+            StockMinimo = 1,
+            FactorEquivalencia = 1,
+            Activo = true
+        };
+        var pizzaFraccion = new Producto
+        {
+            IdProducto = 302,
+            CodigoBarras = "PIZZA-SLI",
+            Nombre = "Rebanada Familiar",
+            PrecioVenta = 35m,
+            Costo = 12m,
+            StockActual = 16,
+            StockMinimo = 4,
+            FactorEquivalencia = 1,
+            Activo = true
+        };
+        context.Productos.AddRange(pizzaMaestra, pizzaFraccion);
+        context.InventarioStockFraccionados.Add(new InventarioStockFraccionado
+        {
+            IdStockFraccionado = 10,
+            IdProductoMaestro = 301,
+            IdProductoFraccion = 302,
+            FactorFraccion = 8,
+            StockFraccionesActual = 16,
+            UltimaActualizacion = DateTime.Now
+        });
+        await context.SaveChangesAsync();
+
+        var service = new InventarioService(context);
+        var dto = new RegistrarEntradaDto
+        {
+            IdProveedor = 1,
+            FolioFactura = "FAC-SLI-001",
+            TotalPagado = 120m,
+            Lineas = new List<RegistrarEntradaLineaDto>
+            {
+                new()
+                {
+                    IdProducto = 302, // Se compra la fracción directamente
+                    Cantidad = 8,
+                    CostoUnitario = 15m
+                }
+            }
+        };
+
+        // Act
+        var result = await service.RegistrarEntradaMercanciaAsync(dto, 1);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Lineas.Should().HaveCount(1);
+
+        var sf = await context.InventarioStockFraccionados.FirstAsync(s => s.IdStockFraccionado == 10);
+        sf.StockFraccionesActual.Should().Be(24); // 16 + 8
+
+        var pFrac = await context.Productos.FindAsync(302);
+        pFrac!.StockActual.Should().Be(24);
+
+        var pMaestro = await context.Productos.FindAsync(301);
+        pMaestro!.StockActual.Should().Be(3); // 24 / 8 = 3
+    }
+
+    [Fact]
+    public async Task ObtenerInventarioPaginado_CubreTodasLasOpcionesDeOrdenamiento()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        var service = new InventarioService(context);
+
+        var opciones = new[]
+        {
+            "producto_asc",
+            "producto_desc",
+            "sku_asc",
+            "stock_desc",
+            "margen_asc",
+            "precio_asc",
+            "precio_desc"
+        };
+
+        foreach (var orden in opciones)
+        {
+            var res = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+            {
+                OrdenarPor = orden,
+                Pagina = 1,
+                TamanoPagina = 10
+            });
+            res.Items.Should().NotBeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task ObtenerInventarioPaginado_CubreCategoriasPersonalizadasEIconos()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        context.Productos.AddRange(
+            new Producto
+            {
+                IdProducto = 401,
+                CodigoBarras = "PIZZA-CUST",
+                Nombre = "Pizza Especial",
+                PrecioVenta = 150m,
+                Costo = 50m,
+                StockActual = 5,
+                StockMinimo = 2,
+                Activo = true,
+                IdCategoriaNavigation = new Categorium { IdCategoria = 50, Nombre = "Pizzas" }
+            },
+            new Producto
+            {
+                IdProducto = 402,
+                CodigoBarras = "MISC-001",
+                Nombre = "Servilletas",
+                PrecioVenta = 0m, // Precio 0 -> margen 0%
+                Costo = 0m,
+                StockActual = 100,
+                StockMinimo = 10,
+                Activo = true,
+                IdCategoriaNavigation = new Categorium { IdCategoria = 51, Nombre = "Insumos Varios" }
+            }
+        );
+        await context.SaveChangesAsync();
+
+        var service = new InventarioService(context);
+
+        // Act
+        var res = await service.ObtenerInventarioPaginadoAsync(new InventarioFiltroDto
+        {
+            Pagina = 1,
+            TamanoPagina = 20
+        });
+
+        // Assert
+        var itemPizza = res.Items.FirstOrDefault(i => i.IdProducto == 401);
+        itemPizza.Should().NotBeNull();
+        itemPizza!.Icono.Should().Be("fa-pizza-slice");
+        itemPizza.Categoria.Should().Be("Pizzas");
+
+        var itemMisc = res.Items.FirstOrDefault(i => i.IdProducto == 402);
+        itemMisc.Should().NotBeNull();
+        itemMisc!.Icono.Should().Be("fa-boxes-stacked");
+        itemMisc.MargenPorcentaje.Should().Be(0m);
     }
 }
