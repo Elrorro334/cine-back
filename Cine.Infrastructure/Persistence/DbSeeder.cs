@@ -320,155 +320,200 @@ BEGIN
 END;");
     }
 
+    private record TematicaSeedItem(
+        string Nombre,
+        string Clave,
+        bool ActivaPorDefecto,
+        string Css,
+        string Paleta,
+        string Tipografia);
+
+    private static readonly TematicaSeedItem[] TematicasBase =
+    [
+        new(
+            "Cine Tradicional (Xilotzin Clásico)",
+            "theme-classic",
+            true,
+            "/css/themes/classic.min.css",
+            "{\"primary\":\"#E11D2F\",\"secondary\":\"#DCA54C\",\"background\":\"#0A0A0A\",\"surface\":\"#141414\",\"text\":\"#E0E0E0\",\"icon\":\"fa-film\"}",
+            "Playfair Display & Montserrat"
+        ),
+        new(
+            "Noche de Terror (Halloween)",
+            "theme-halloween",
+            false,
+            "/css/themes/halloween.min.css",
+            "{\"primary\":\"#FF5500\",\"secondary\":\"#7E22CE\",\"background\":\"#0C0217\",\"surface\":\"#18072E\",\"text\":\"#F3E8FF\",\"icon\":\"fa-ghost\"}",
+            "Creepster & Montserrat"
+        ),
+        new(
+            "Especial Navideño e Invernal",
+            "theme-christmas",
+            false,
+            "/css/themes/christmas.min.css",
+            "{\"primary\":\"#DC2626\",\"secondary\":\"#15803D\",\"background\":\"#03140C\",\"surface\":\"#0A2B1A\",\"text\":\"#FFFFFF\",\"icon\":\"fa-snowflake\"}",
+            "Mountains of Christmas & Montserrat"
+        ),
+        new(
+            "Fiestas Patrias & Tradición Mexicana",
+            "theme-patrias",
+            false,
+            "/css/themes/patrias.min.css",
+            "{\"primary\":\"#00843D\",\"secondary\":\"#CE1126\",\"background\":\"#07160E\",\"surface\":\"#0E291B\",\"text\":\"#FFFFFF\",\"icon\":\"fa-flag\"}",
+            "Rye / Alfa Slab One & Montserrat"
+        )
+    ];
+
     public static async Task SeedSeguridadYTematicasAsync(CineDbContext db)
     {
+        var sucursal = await EnsureSucursalAsync(db);
+        await EnsureTurnosLaboralesAsync(db);
+        await EnsureConfiguracionSeguridadAsync(db, sucursal);
+        await EnsureTematicasYPlantillasAsync(db);
+    }
+
+    private static async Task<Sucursal> EnsureSucursalAsync(CineDbContext db)
+    {
+        var sucursal = await db.Sucursales.FirstOrDefaultAsync();
+        if (sucursal != null) return sucursal;
+
         var ipInicial = await db.RedesAutorizadas
             .Where(r => r.DireccionIp != "127.0.0.1" && r.DireccionIp != "::1")
             .Select(r => r.DireccionIp)
             .FirstOrDefaultAsync() ?? "192.168.1.100";
 
-        var sucursal = await db.Sucursales.FirstOrDefaultAsync();
-        if (sucursal == null)
+        sucursal = new Sucursal
         {
-            sucursal = new Sucursal
-            {
-                Nombre = "Cine Teatro Xilotzin - Matriz Jilotepec",
-                IpDefecto = ipInicial
-            };
-            db.Sucursales.Add(sucursal);
-            await db.SaveChangesAsync();
-        }
-
-        if (!await db.TurnosLaborales.AnyAsync())
-        {
-            db.TurnosLaborales.AddRange(
-                new TurnoLaboral
-                {
-                    NombreTurno = "Matutino",
-                    HoraInicio = new TimeSpan(8, 0, 0),
-                    HoraFin = new TimeSpan(15, 30, 0)
-                },
-                new TurnoLaboral
-                {
-                    NombreTurno = "Vespertino",
-                    HoraInicio = new TimeSpan(15, 30, 0),
-                    HoraFin = new TimeSpan(23, 0, 0)
-                }
-            );
-            await db.SaveChangesAsync();
-        }
-
-        if (!await db.ConfiguracionesSeguridad.AnyAsync())
-        {
-            db.ConfiguracionesSeguridad.Add(new ConfiguracionSeguridad
-            {
-                SucursalId = sucursal.Id,
-                IpAutorizada = sucursal.IpDefecto,
-                HorarioInicioCajeros = new TimeSpan(8, 0, 0),
-                HorarioFinCajeros = new TimeSpan(23, 0, 0),
-                AutorizarExcepcionHorasExtras = false,
-                FechaUltimaModificacion = DateTime.Now,
-                UsuarioModificoId = 1
-            });
-            await db.SaveChangesAsync();
-        }
-
-        var tematicasBase = new[]
-        {
-            (
-                Nombre: "Cine Tradicional (Xilotzin Clásico)",
-                Clave: "theme-classic",
-                ActivaPorDefecto: true,
-                Css: "/css/themes/classic.min.css",
-                Paleta: "{\"primary\":\"#E11D2F\",\"secondary\":\"#DCA54C\",\"background\":\"#0A0A0A\",\"surface\":\"#141414\",\"text\":\"#E0E0E0\",\"icon\":\"fa-film\"}",
-                Tipografia: "Playfair Display & Montserrat"
-            ),
-            (
-                Nombre: "Noche de Terror (Halloween)",
-                Clave: "theme-halloween",
-                ActivaPorDefecto: false,
-                Css: "/css/themes/halloween.min.css",
-                Paleta: "{\"primary\":\"#FF5500\",\"secondary\":\"#7E22CE\",\"background\":\"#0C0217\",\"surface\":\"#18072E\",\"text\":\"#F3E8FF\",\"icon\":\"fa-ghost\"}",
-                Tipografia: "Creepster & Montserrat"
-            ),
-            (
-                Nombre: "Especial Navideño e Invernal",
-                Clave: "theme-christmas",
-                ActivaPorDefecto: false,
-                Css: "/css/themes/christmas.min.css",
-                Paleta: "{\"primary\":\"#DC2626\",\"secondary\":\"#15803D\",\"background\":\"#03140C\",\"surface\":\"#0A2B1A\",\"text\":\"#FFFFFF\",\"icon\":\"fa-snowflake\"}",
-                Tipografia: "Mountains of Christmas & Montserrat"
-            ),
-            (
-                Nombre: "Fiestas Patrias & Tradición Mexicana",
-                Clave: "theme-patrias",
-                ActivaPorDefecto: false,
-                Css: "/css/themes/patrias.min.css",
-                Paleta: "{\"primary\":\"#00843D\",\"secondary\":\"#CE1126\",\"background\":\"#07160E\",\"surface\":\"#0E291B\",\"text\":\"#FFFFFF\",\"icon\":\"fa-flag\"}",
-                Tipografia: "Rye / Alfa Slab One & Montserrat"
-            )
+            Nombre = "Cine Teatro Xilotzin - Matriz Jilotepec",
+            IpDefecto = ipInicial
         };
+        db.Sucursales.Add(sucursal);
+        await db.SaveChangesAsync();
+        return sucursal;
+    }
 
+    private static async Task EnsureTurnosLaboralesAsync(CineDbContext db)
+    {
+        if (await db.TurnosLaborales.AnyAsync()) return;
+
+        db.TurnosLaborales.AddRange(
+            new TurnoLaboral
+            {
+                NombreTurno = "Matutino",
+                HoraInicio = new TimeSpan(8, 0, 0),
+                HoraFin = new TimeSpan(15, 30, 0)
+            },
+            new TurnoLaboral
+            {
+                NombreTurno = "Vespertino",
+                HoraInicio = new TimeSpan(15, 30, 0),
+                HoraFin = new TimeSpan(23, 0, 0)
+            }
+        );
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task EnsureConfiguracionSeguridadAsync(CineDbContext db, Sucursal sucursal)
+    {
+        if (await db.ConfiguracionesSeguridad.AnyAsync()) return;
+
+        db.ConfiguracionesSeguridad.Add(new ConfiguracionSeguridad
+        {
+            SucursalId = sucursal.Id,
+            IpAutorizada = sucursal.IpDefecto,
+            HorarioInicioCajeros = new TimeSpan(8, 0, 0),
+            HorarioFinCajeros = new TimeSpan(23, 0, 0),
+            AutorizarExcepcionHorasExtras = false,
+            FechaUltimaModificacion = DateTime.Now,
+            UsuarioModificoId = 1
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task EnsureTematicasYPlantillasAsync(CineDbContext db)
+    {
         bool yaExisteActiva = await db.TematicasSitio.AnyAsync(t => t.EsActiva);
         var existentes = await db.TematicasSitio
             .Include(t => t.PlantillasCss)
             .ToListAsync();
 
-        foreach (var item in tematicasBase)
+        foreach (var item in TematicasBase)
         {
-            var tematica = existentes.FirstOrDefault(t =>
-                string.Equals(t.ClaveIdentificadora, item.Clave, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(t.NombreTematica, item.Nombre, StringComparison.OrdinalIgnoreCase) ||
-                (item.Clave == "theme-traditional" && t.ClaveIdentificadora == "theme-classic") ||
-                (item.Clave == "theme-mexican" && t.ClaveIdentificadora == "theme-patrias"));
-
-            if (tematica == null)
+            var tematica = await SincronizarTematicaAsync(db, existentes, item, yaExisteActiva);
+            if (tematica.EsActiva)
             {
-                bool activar = !yaExisteActiva && item.ActivaPorDefecto;
-                tematica = new TematicaSitio
-                {
-                    NombreTematica = item.Nombre,
-                    ClaveIdentificadora = item.Clave,
-                    EsActiva = activar,
-                    FechaActivacion = activar ? DateTime.Now : null
-                };
-                db.TematicasSitio.Add(tematica);
-                await db.SaveChangesAsync();
-
-                if (activar)
-                {
-                    yaExisteActiva = true;
-                }
-            }
-            else
-            {
-                tematica.NombreTematica = item.Nombre;
-                tematica.ClaveIdentificadora = item.Clave;
-                await db.SaveChangesAsync();
+                yaExisteActiva = true;
             }
 
-            var plantilla = tematica.PlantillasCss.FirstOrDefault() ??
-                            await db.PlantillasCss.FirstOrDefaultAsync(p => p.TematicaId == tematica.Id);
-
-            if (plantilla == null)
-            {
-                db.PlantillasCss.Add(new PlantillaCss
-                {
-                    TematicaId = tematica.Id,
-                    RutaArchivoCss = item.Css,
-                    PaletaColoresJson = item.Paleta,
-                    Tipografia = item.Tipografia
-                });
-                await db.SaveChangesAsync();
-            }
-            else
-            {
-                plantilla.RutaArchivoCss = item.Css;
-                plantilla.PaletaColoresJson = item.Paleta;
-                plantilla.Tipografia = item.Tipografia;
-                await db.SaveChangesAsync();
-            }
+            await SincronizarPlantillaCssAsync(db, tematica, item);
         }
+    }
+
+    private static bool CoincideTematica(TematicaSitio t, TematicaSeedItem item)
+    {
+        if (string.Equals(t.ClaveIdentificadora, item.Clave, StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(t.NombreTematica, item.Nombre, StringComparison.OrdinalIgnoreCase)) return true;
+        if (item.Clave == "theme-traditional" && t.ClaveIdentificadora == "theme-classic") return true;
+        return item.Clave == "theme-mexican" && t.ClaveIdentificadora == "theme-patrias";
+    }
+
+    private static async Task<TematicaSitio> SincronizarTematicaAsync(
+        CineDbContext db,
+        List<TematicaSitio> existentes,
+        TematicaSeedItem item,
+        bool yaExisteActiva)
+    {
+        var tematica = existentes.FirstOrDefault(t => CoincideTematica(t, item));
+
+        if (tematica == null)
+        {
+            bool activar = !yaExisteActiva && item.ActivaPorDefecto;
+            tematica = new TematicaSitio
+            {
+                NombreTematica = item.Nombre,
+                ClaveIdentificadora = item.Clave,
+                EsActiva = activar,
+                FechaActivacion = activar ? DateTime.Now : null
+            };
+            db.TematicasSitio.Add(tematica);
+            existentes.Add(tematica);
+        }
+        else
+        {
+            tematica.NombreTematica = item.Nombre;
+            tematica.ClaveIdentificadora = item.Clave;
+        }
+
+        await db.SaveChangesAsync();
+        return tematica;
+    }
+
+    private static async Task SincronizarPlantillaCssAsync(
+        CineDbContext db,
+        TematicaSitio tematica,
+        TematicaSeedItem item)
+    {
+        var plantilla = tematica.PlantillasCss.FirstOrDefault() ??
+                        await db.PlantillasCss.FirstOrDefaultAsync(p => p.TematicaId == tematica.Id);
+
+        if (plantilla == null)
+        {
+            db.PlantillasCss.Add(new PlantillaCss
+            {
+                TematicaId = tematica.Id,
+                RutaArchivoCss = item.Css,
+                PaletaColoresJson = item.Paleta,
+                Tipografia = item.Tipografia
+            });
+        }
+        else
+        {
+            plantilla.RutaArchivoCss = item.Css;
+            plantilla.PaletaColoresJson = item.Paleta;
+            plantilla.Tipografia = item.Tipografia;
+        }
+
+        await db.SaveChangesAsync();
     }
 
     public static async Task SeedPreordenesDemoAsync(CineDbContext db)
