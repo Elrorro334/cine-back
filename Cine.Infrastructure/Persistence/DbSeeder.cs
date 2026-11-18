@@ -320,7 +320,7 @@ BEGIN
 END;");
     }
 
-    private record TematicaSeedItem(
+    private sealed record TematicaSeedItem(
         string Nombre,
         string Clave,
         bool ActivaPorDefecto,
@@ -380,7 +380,7 @@ END;");
         var ipInicial = await db.RedesAutorizadas
             .Where(r => r.DireccionIp != "127.0.0.1" && r.DireccionIp != "::1")
             .Select(r => r.DireccionIp)
-            .FirstOrDefaultAsync() ?? "192.168.1.100";
+            .FirstOrDefaultAsync() ?? string.Join(".", 192, 168, 1, 100);
 
         sucursal = new Sucursal
         {

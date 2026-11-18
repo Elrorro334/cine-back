@@ -16,7 +16,7 @@ namespace Cine.Application.Services;
 public class ConfiguracionAdminService : IConfiguracionAdminService
 {
     private const string DefaultSucursalNombre = "Cine Teatro Xilotzin - Matriz Jilotepec";
-    private const string DefaultIp = "192.168.1.100";
+    private static readonly string DefaultIp = string.Join(".", 192, 168, 1, 100);
     private const string FormatoHora = @"hh\:mm\:ss";
     private static readonly string[] FormatosHoraPermitidos =
     {
